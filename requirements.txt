@@ -2,7 +2,7 @@
 pandas==2.2.0           # Data manipulation and OHLCV processing
 numpy==1.26.4            # Numerical calculations for indicators
 ta==0.11.0               # Technical Analysis library (RSI, ATR, Bollinger)
-scikit-learn==1.4.1      # For Regime Detection (K-Means/GMM clustering)
+scikit-learn             # For Regime Detection (K-Means/GMM clustering)
 
 # --- API & Connectivity ---
 yfinance==0.2.37         # Reliable free market data (for Signal Testing)
