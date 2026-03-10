@@ -1,7 +1,8 @@
 import pandas as pd
-import ta # Technical Analysis Library
+import ta  # Technical Analysis Library
+from strategies.base_strategy import BaseStrategy
 
-class AlphaStrategy(BaseStrategy):
+class TrendStrategy(BaseStrategy):
     def generate_signal(self, df, regime):
         # 1. Calculate Standard Indicators
         # Exponential Moving Averages (EMA)
@@ -15,6 +16,9 @@ class AlphaStrategy(BaseStrategy):
         bb = ta.volatility.BollingerBands(df['Close'], window=20)
         df['bb_upper'] = bb.bollinger_hband()
         df['bb_lower'] = bb.bollinger_lband()
+        
+        # Add ATR for the Risk Guardian to use later
+        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
 
         # Get latest values
         last_row = df.iloc[-1]
