@@ -12,26 +12,36 @@ jobs:
   monitor-trades:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Python
+      - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Run Monitor
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # This ensures 'yaml', 'pandas', and 'requests' are installed
+          pip install -r requirements.txt
+
+      - name: 🚀 Run Monitor
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          # We call a small wrapper script 'run_monitor.py' 
-          # which uses SignalMonitor and sends results to Discord
-          python run_monitor.py
+        run: python run_monitor.py
 
-      - name: Sync Logs
+      - name: 💾 Sync Trade Outcomes
         run: |
           git config --global user.name "Delphi-Monitor-Bot"
           git config --global user.email "bot@delphi-oracle.local"
-          git add logs/trade_log.csv
-          git commit -m "📈 Sync: Trade Outcomes [skip ci]" || echo "No changes"
-          git push
+          
+          if [ -f "logs/trade_log.csv" ]; then
+            git add logs/trade_log.csv
+            git diff --quiet && git diff --staged --quiet || (git commit -m "📈 Update: Trade Outcomes [skip ci]" && git push)
+          else
+            echo "No log file found to update."
+          fi
