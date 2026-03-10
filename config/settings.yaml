@@ -2,12 +2,19 @@
 bot_name: "Gemini_Forex_Alpha_2026"
 version: "1.0.0"
 
-# Target Assets
+# Target Assets - Expand this list as needed
 symbols:
-  - "EURUSD"
-  - "GBPUSD"
-  - "USDJPY"
-  - "XAUUSD" # Gold
+  - "EURUSD"  # Euro / US Dollar
+  - "GBPUSD"  # British Pound / US Dollar
+  - "USDJPY"  # US Dollar / Japanese Yen
+  - "AUDUSD"  # Australian Dollar / US Dollar
+  - "USDCAD"  # US Dollar / Canadian Dollar
+  - "USDCHF"  # US Dollar / Swiss Franc
+  - "NZDUSD"  # New Zealand Dollar / US Dollar
+  - "EURGBP"  # Euro / British Pound (Cross)
+  - "EURJPY"  # Euro / Japanese Yen (Cross)
+  - "GBPJPY"  # British Pound / Japanese Yen (Volatile)
+  - "XAUUSD"  # Gold (Handled as GC=F in DataManager)
 
 # Strategy Parameters
 timeframe: "1h" # Options: 15m, 1h, 4h, 1d
