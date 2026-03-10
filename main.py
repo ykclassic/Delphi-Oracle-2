@@ -1,51 +1,71 @@
+import os
+import yaml
+import logging
 import pandas as pd
-import ta  # Technical Analysis Library
-from strategies.base_strategy import BaseStrategy
+from core.data_ingestion import DataManager
+from core.regime_detector import RegimeDetector
+from risk_management.news_sentry import NewsSentry
+from risk_management.position_sizer import PositionSizer
+from strategies.trend_following import TrendStrategy
+from execution.discord_adapter import DiscordNotifier
 
-class TrendStrategy(BaseStrategy):
-    def generate_signal(self, df, regime):
-        # 1. Calculate Standard Indicators
-        # Exponential Moving Averages (EMA)
-        df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=20)
-        df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=50)
-        
-        # RSI for overbought/oversold
-        df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
-        
-        # Bollinger Bands for volatility/mean reversion
-        bb = ta.volatility.BollingerBands(df['Close'], window=20)
-        df['bb_upper'] = bb.bollinger_hband()
-        df['bb_lower'] = bb.bollinger_lband()
-        
-        # Add ATR for the Risk Guardian to use later
-        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
+def load_config():
+    with open("config/settings.yaml", "r") as f:
+        # Resolve environment variables for Discord Webhook
+        config = yaml.safe_load(f)
+        if config['discord']['webhook_url'] == "${DISCORD_WEBHOOK_URL}":
+            config['discord']['webhook_url'] = os.getenv("DISCORD_WEBHOOK_URL")
+        return config
 
-        # Get latest values
-        last_row = df.iloc[-1]
-        prev_row = df.iloc[-2]
+def run_bot():
+    # 1. Setup Logging & Config
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    config = load_config()
+    
+    if not config['discord']['webhook_url']:
+        logging.error("DISCORD_WEBHOOK_URL not found in environment variables.")
+        return
 
-        # 2. Logic Selection based on Phase 2 Regime
+    # 2. Initialize Modules
+    data_manager = DataManager(config)
+    regime_detector = RegimeDetector()
+    news_sentry = NewsSentry(config)
+    strategy = TrendStrategy(config)
+    position_sizer = PositionSizer(config)
+    notifier = DiscordNotifier(config)
+
+    # 3. Execution Flow
+    for symbol in config['symbols']:
+        logging.info(f"Analyzing {symbol}...")
         
-        # REGIME 1: TRENDING (Momentum Logic)
-        if regime == 1:
-            # Bullish: Fast EMA crosses above Slow EMA + RSI > 50
-            if prev_row['ema_fast'] <= prev_row['ema_slow'] and last_row['ema_fast'] > last_row['ema_slow']:
-                if last_row['rsi'] > 50:
-                    return "BUY (Trend)"
+        # Check News first
+        if news_sentry.is_market_volatile(symbol):
+            logging.warning(f"Skipping {symbol} due to high-impact news.")
+            continue
             
-            # Bearish: Fast EMA crosses below Slow EMA + RSI < 50
-            if prev_row['ema_fast'] >= prev_row['ema_slow'] and last_row['ema_fast'] < last_row['ema_slow']:
-                if last_row['rsi'] < 50:
-                    return "SELL (Trend)"
-
-        # REGIME 0: RANGING (Mean Reversion Logic)
-        elif regime == 0:
-            # Bullish: Price touches lower Bollinger Band + RSI < 35 (Oversold)
-            if last_row['Close'] <= last_row['bb_lower'] and last_row['rsi'] < 35:
-                return "BUY (Mean Reversion)"
+        # Get Data
+        df = data_manager.get_latest_data(symbol)
+        if df is None or len(df) < 50:
+            logging.warning(f"Insufficient data for {symbol}.")
+            continue
             
-            # Bearish: Price touches upper Bollinger Band + RSI > 65 (Overbought)
-            if last_row['Close'] >= last_row['bb_upper'] and last_row['rsi'] > 65:
-                return "SELL (Mean Reversion)"
+        # Detect Regime
+        regime = regime_detector.classify(df)
+        logging.info(f"Current Market Regime for {symbol}: {regime}")
 
-        return None # No high-probability signal found
+        # Generate Signal
+        signal_type = strategy.generate_signal(df, regime)
+        
+        # If signal exists, calculate risk and send to Discord
+        if signal_type:
+            risk_data = position_sizer.calculate(df, symbol, signal_type)
+            success = notifier.send_signal(symbol, signal_type, risk_data)
+            if success:
+                logging.info(f"Successfully sent {signal_type} signal for {symbol} to Discord.")
+            else:
+                logging.error(f"Failed to send signal for {symbol} to Discord.")
+        else:
+            logging.info(f"No signal generated for {symbol}.")
+
+if __name__ == "__main__":
+    run_bot()
