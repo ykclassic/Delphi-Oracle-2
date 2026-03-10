@@ -1,0 +1,20 @@
+# --- Core Data & Analysis ---
+pandas==2.2.0           # Data manipulation and OHLCV processing
+numpy==1.26.4            # Numerical calculations for indicators
+ta==0.11.0               # Technical Analysis library (RSI, ATR, Bollinger)
+scikit-learn==1.4.1      # For Regime Detection (K-Means/GMM clustering)
+
+# --- API & Connectivity ---
+yfinance==0.2.37         # Reliable free market data (for Signal Testing)
+requests==2.31.0         # Synchronous API calls for News/Calendars
+httpx==0.27.0            # Asynchronous API calls for high-speed data
+python-dotenv==1.0.1     # Managing GitHub Secrets/Local .env files
+
+# --- Discord Integration ---
+discord.py==2.3.2        # Modern Discord API wrapper for bot commands
+nextcord==2.6.0          # Alternative for enhanced UI/Slash commands
+
+# --- Utilities ---
+pyyaml==6.0.1            # Parsing the /config/settings.yaml file
+schedule==1.2.1          # Task scheduling for GitHub Actions runners
+pytz==2024.1             # Timezone management (Crucial for Forex sessions)
