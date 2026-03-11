@@ -1,0 +1,30 @@
+name: Delphi Oracle - Weekly Report
+
+on:
+  schedule:
+    - cron: '0 22 * * 5' # Every Friday at 10 PM UTC (Market Close)
+  workflow_dispatch:      # Allows manual trigger anytime
+
+permissions:
+  contents: read
+
+jobs:
+  build-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Report Generator
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python generate_report.py
