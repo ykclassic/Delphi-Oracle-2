@@ -1,0 +1,14 @@
+name: 🛡️ Connection Watchdog
+on:
+  push:
+    branches: [ main ] # Starts when you push code
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: self-hosted
+    steps:
+      - name: Start Latency Guard
+        run: |
+          # This runs in a continuous loop in the background
+          python execution/latency_monitor.py
