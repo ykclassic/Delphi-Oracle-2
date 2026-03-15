@@ -1,0 +1,27 @@
+name: 🧠 Weekend Brain Retrainer
+on:
+  schedule:
+    - cron: '0 22 * * 0' # Runs at 10 PM UTC every Sunday
+  workflow_dispatch:      # Allows manual trigger
+
+jobs:
+  retrain:
+    runs-on: self-hosted # Must run on your PC/VPS where MT5 is
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Upgrade ML Models
+        run: |
+          python scripts/weekend_retrainer.py
+        env:
+          EXNESS_PASSWORD: ${{ secrets.EXNESS_PASSWORD }}
+          PEPPERSTONE_PASSWORD: ${{ secrets.PEPPERSTONE_PASSWORD }}
+
+      - name: Commit Updated Models
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add models/*.pkl
+          git commit -m "🚀 Automated: Weekly ML Brain Upgrade" || echo "No changes to commit"
+          git push
