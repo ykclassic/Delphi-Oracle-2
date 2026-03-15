@@ -1,0 +1,22 @@
+name: 📊 Friday Performance Audit
+on:
+  schedule:
+    - cron: '0 21 * * 5' # Runs at 9 PM UTC every Friday (Market Close)
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Monte Carlo Stress Test
+        run: |
+          python risk_management/monte_carlo.py
+
+      - name: Upload Audit Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Weekly-Audit-Report
+          path: logs/performance_summary.pdf # Assuming your script saves a PDF
