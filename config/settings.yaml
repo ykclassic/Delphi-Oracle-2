@@ -1,37 +1,86 @@
-# Global Bot Settings
-bot_name: "Gemini_Forex_Alpha_2026"
-version: "1.0.0"
+# ==========================================
+# 🔮 DELPHI ORACLE: GLOBAL CONFIGURATION (2026)
+# ==========================================
 
-# Target Assets - Expand this list as needed
+bot_name: "Delphi_Oracle_Alpha_2026"
+version: "1.1.0"
+
+# Target Assets - Combined Forex, Metals, and Crypto
 symbols:
+  # --- Forex Majors ---
   - "EURUSD"  # Euro / US Dollar
   - "GBPUSD"  # British Pound / US Dollar
   - "USDJPY"  # US Dollar / Japanese Yen
   - "AUDUSD"  # Australian Dollar / US Dollar
   - "USDCAD"  # US Dollar / Canadian Dollar
-  - "USDCHF"  # US Dollar / Swiss Franc
-  - "NZDUSD"  # New Zealand Dollar / US Dollar
-  - "EURGBP"  # Euro / British Pound (Cross)
-  - "EURJPY"  # Euro / Japanese Yen (Cross)
-  - "GBPJPY"  # British Pound / Japanese Yen (Volatile)
-  - "XAUUSD"  # Gold (Handled as GC=F in DataManager)
+  
+  # --- Volatile Crosses ---
+  - "EURJPY"
+  - "GBPJPY"
+  
+  # --- Commodities & Metals ---
+  - "XAUUSD"  # Gold
+  - "XAGUSD"  # Silver
+  
+  # --- Crypto (Future Ready) ---
+  - "BTCUSD"  # Bitcoin
+  - "ETHUSD"  # Ethereum
+  - "SOLUSD"  # Solana
 
-# Strategy Parameters
-timeframe: "1h" # Options: 15m, 1h, 4h, 1d
+# ==========================================
+# 🏦 MULTI-ACCOUNT ARCHITECTURE
+# ==========================================
+accounts:
+  - name: "Exness_Demo"
+    login: 12345678
+    password: "${EXNESS_PASSWORD}"
+    server: "Exness-MT5Trial6"
+    enabled: true
+    risk_multiplier: 1.0  # Full risk
+
+  - name: "Pepperstone_Demo"
+    login: 87654321
+    password: "${PEPPERSTONE_PASSWORD}"
+    server: "Pepperstone-Demo"
+    enabled: true
+    risk_multiplier: 0.5  # Conservative testing
+
+  - name: "Octa_Demo"
+    login: 88786261
+    password: "${by5uQuDu}"
+    server: "OctaFX-Demo"
+    enabled: true
+    risk_multiplier: 0.5  # Testing 1:1000 margin requirements
+
+# ==========================================
+# 🧠 STRATEGY & ML PARAMETERS
+# ==========================================
+timeframe: "1h"
 regime_detection: true
-lookback_period: 100 # Candles to analyze for trend
+lookback_period: 100
+crypto_volatility_scaling: true  # Automatically widens SL for BTC/ETH
 
-# Risk Management (Signals only)
+# ==========================================
+# 🛡️ RISK & EXECUTION GUARDS
+# ==========================================
 risk_per_trade_percent: 1.0
-default_stop_loss_atr: 1.5 # SL is 1.5x ATR
-default_take_profit_ratio: 2.0 # TP is 2x the SL distance
+default_stop_loss_atr: 1.5
+default_take_profit_ratio: 2.0
+
+# Connection Watchdog Settings
+max_allowed_latency_ms: 200
+safety_switch_path: "execution/safety.txt"
 
 # News Filter (Minutes)
 news_buffer_before: 30
 news_buffer_after: 15
 impact_levels: ["High", "Medium"]
 
-# Discord Integration
+# ==========================================
+# 📡 DISCORD & NOTIFICATIONS
+# ==========================================
 discord:
-  webhook_url: "${DISCORD_WEBHOOK_URL}" # Fetched from GitHub Secrets
+  webhook_url: "${DISCORD_WEBHOOK_URL}"
   alert_role_id: "SIGNAL_SUBSCRIBER"
+  send_daily_health_report: true
+  health_report_time: "08:00" # UTC
