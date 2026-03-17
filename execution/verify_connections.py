@@ -1,62 +1,88 @@
 import MetaTrader5 as mt5
 import yaml
 import os
+import sys
+import requests
+from datetime import datetime
 
-def verify_all_connections(config_path="settings.yaml"):
-    """
-    Programmatic Verification Module for Delphi Oracle.
-    Iterates through all accounts in settings.yaml and attempts a secure login.
-    """
-    # 1. Load the Configuration
-    try:
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
-    except Exception as e:
-        print(f"❌ Error loading {config_path}: {e}")
-        return
+class DiscordNotifier:
+    def __init__(self, webhook_url):
+        self.webhook_url = webhook_url
 
-    print(f"--- 🔮 {config['bot_name']} Connection Audit ---")
+    def send_audit_report(self, results):
+        """Sends a formatted embed to Discord with the account statuses."""
+        embed = {
+            "title": "🔮 Delphi Oracle: Account Connection Audit",
+            "color": 0x7289da,  # Professional Blurple
+            "timestamp": datetime.utcnow().isoformat(),
+            "fields": [],
+            "footer": {"text": "System Architecture: Oracle Cloud / VPSWala"}
+        }
+
+        for name, status, details in results:
+            indicator = "✅" if status == "Connected" else "❌"
+            embed["fields"].append({
+                "name": f"{indicator} {name}",
+                "value": f"**Status:** {status}\n**Details:** {details}",
+                "inline": False
+            })
+
+        payload = {"embeds": [embed]}
+        try:
+            requests.post(self.webhook_url, json=payload)
+        except Exception as e:
+            print(f"⚠️ Discord Alert Failed: {e}")
+
+def load_config(config_path="settings.yaml"):
+    if not os.path.exists(config_path):
+        print(f"❌ Critical Error: {config_path} not found.")
+        sys.exit(1)
+    with open(config_path, "r") as file:
+        return yaml.safe_load(file)
+
+def verify_all_accounts():
+    config = load_config()
+    accounts = config.get("accounts", [])
+    webhook = os.getenv("DISCORD_WEBHOOK_URL")
+    notifier = DiscordNotifier(webhook) if webhook else None
     
-    # 2. Initialize MT5 Engine
     if not mt5.initialize():
-        print(f"❌ MT5 initialization failed. Error: {mt5.last_error()}")
-        return
+        print("❌ MT5 Initialization failed.")
+        sys.exit(1)
 
-    # 3. Iterate and Verify Each Account
-    for account in config.get('accounts', []):
-        if not account.get('enabled'):
-            print(f"⚪ {account['name']}: Skipped (Enabled: False)")
+    audit_results = []
+    all_success = True
+
+    for acc in accounts:
+        if not acc.get("enabled"):
+            audit_results.append((acc['name'], "Skipped", "Disabled in settings.yaml"))
             continue
 
-        # Extract environment variables (Security Rule Compliance)
-        # Note: If running locally, ensure these match your .env or OS variables
-        raw_password = os.getenv(account['password'].replace("${", "").replace("}", ""))
-        
-        # Fallback for debugging (Remove in production)
-        if not raw_password and account['name'] == "Octa_Demo":
-             raw_password = "by5uQuDu" 
+        login_id = int(acc["login"])
+        srv = acc["server"]
+        # Fetching the password from the environment variable named in YAML
+        env_var_name = acc["password"].replace("${", "").replace("}", "")
+        pwd = os.getenv(env_var_name)
 
-        print(f"🔄 Attempting connection: {account['name']} ({account['server']})...")
+        authorized = mt5.login(login=login_id, password=pwd, server=srv)
         
-        authorized = mt5.login(
-            login=int(account['login']),
-            password=raw_password,
-            server=account['server']
-        )
-
         if authorized:
-            acc_info = mt5.account_info()
-            print(f"✅ {account['name']} CONNECTED")
-            print(f"   - Balance: {acc_info.balance} {acc_info.currency}")
-            print(f"   - Leverage: 1:{acc_info.leverage}")
-            print(f"   - Margin Level: {acc_info.margin_level}%")
+            info = mt5.account_info()
+            detail_str = f"Equity: {info.equity} {info.currency} | Lev: 1:{info.leverage}"
+            audit_results.append((acc['name'], "Connected", detail_str))
         else:
-            error = mt5.last_error()
-            print(f"🔴 {account['name']} FAILED. Error Code: {error}")
+            err = f"Error: {mt5.last_error()}"
+            audit_results.append((acc['name'], "FAILED", err))
+            all_success = False
 
-    # 4. Shutdown MT5 to release resources
+    # Send the final report to Discord
+    if notifier:
+        notifier.send_audit_report(audit_results)
+
     mt5.shutdown()
-    print("------------------------------------------")
+
+    if not all_success:
+        sys.exit(1)
 
 if __name__ == "__main__":
-    verify_all_connections()
+    verify_all_accounts()
