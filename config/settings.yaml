@@ -47,8 +47,8 @@ accounts:
 
   - name: "Octa_Demo"
     login: 88786261
-    password: "${by5uQuDu}"
-    server: "OctaFX-Demo"
+    password: "${OCTA_PASSWORD}"  # Secure variable for your Octa password
+    server: "OctaFX-Demo"         # Standard Octa Demo server name
     enabled: true
     risk_multiplier: 0.5  # Testing 1:1000 margin requirements
 
