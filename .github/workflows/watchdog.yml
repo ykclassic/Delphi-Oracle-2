@@ -1,14 +1,37 @@
 name: 🛡️ Connection Watchdog
+
 on:
   push:
-    branches: [ main ] # Starts when you push code
+    branches: [ main ]
+  schedule:
+    - cron: '0 * * * *' # Auto-check every hour to ensure 100% uptime
   workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: self-hosted
     steps:
-      - name: Start Latency Guard
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Install Dependencies
         run: |
-          # This runs in a continuous loop in the background
+          pip install -r requirements.txt
+
+      - name: 🔍 Account Audit & Discord Alert
+        # This runs the new script that checks Octa, Exness, and Pepperstone
+        run: |
+          python execution/verify_connections.py
+        env:
+          # This maps your GitHub Secrets to the Python script
+          EXNESS_PASSWORD: ${{ secrets.EXNESS_PASSWORD }}
+          PEPPERSTONE_PASSWORD: ${{ secrets.PEPPERSTONE_PASSWORD }}
+          OCTA_PASSWORD: ${{ secrets.OCTA_PASSWORD }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: ⚡ Start Continuous Latency Guard
+        run: |
+          # This stays running in the background to protect your trades
           python execution/latency_monitor.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
