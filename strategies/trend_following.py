@@ -1,51 +1,68 @@
 import pandas as pd
-import ta  # Technical Analysis Library
+import ta
 from strategies.base_strategy import BaseStrategy
 
 class TrendStrategy(BaseStrategy):
     def generate_signal(self, df, regime):
         # 1. Calculate Standard Indicators
-        # Exponential Moving Averages (EMA)
         df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=20)
         df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=50)
-        
-        # RSI for overbought/oversold
         df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
         
-        # Bollinger Bands for volatility/mean reversion
         bb = ta.volatility.BollingerBands(df['Close'], window=20)
         df['bb_upper'] = bb.bollinger_hband()
         df['bb_lower'] = bb.bollinger_lband()
         
-        # Add ATR for the Risk Guardian to use later
+        # ATR is critical for our SL/TP math
         df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
 
-        # Get latest values
         last_row = df.iloc[-1]
         prev_row = df.iloc[-2]
-
-        # 2. Logic Selection based on Phase 2 Regime
         
-        # REGIME 1: TRENDING (Momentum Logic)
+        # Pull Risk Params from settings.yaml (with fallbacks)
+        sl_multiplier = self.config.get('default_stop_loss_atr', 1.5)
+        tp_ratio = self.config.get('default_take_profit_ratio', 2.0)
+
+        signal_type = None
+        
+        # 2. Logic Selection
+        # --- REGIME 1: TRENDING ---
         if regime == 1:
-            # Bullish: Fast EMA crosses above Slow EMA + RSI > 50
             if prev_row['ema_fast'] <= prev_row['ema_slow'] and last_row['ema_fast'] > last_row['ema_slow']:
                 if last_row['rsi'] > 50:
-                    return "BUY (Trend)"
+                    signal_type = "BUY (Trend)"
             
-            # Bearish: Fast EMA crosses below Slow EMA + RSI < 50
-            if prev_row['ema_fast'] >= prev_row['ema_slow'] and last_row['ema_fast'] < last_row['ema_slow']:
+            elif prev_row['ema_fast'] >= prev_row['ema_slow'] and last_row['ema_fast'] < last_row['ema_slow']:
                 if last_row['rsi'] < 50:
-                    return "SELL (Trend)"
+                    signal_type = "SELL (Trend)"
 
-        # REGIME 0: RANGING (Mean Reversion Logic)
+        # --- REGIME 0: RANGING ---
         elif regime == 0:
-            # Bullish: Price touches lower Bollinger Band + RSI < 35 (Oversold)
             if last_row['Close'] <= last_row['bb_lower'] and last_row['rsi'] < 35:
-                return "BUY (Mean Reversion)"
+                signal_type = "BUY (Mean Reversion)"
             
-            # Bearish: Price touches upper Bollinger Band + RSI > 65 (Overbought)
-            if last_row['Close'] >= last_row['bb_upper'] and last_row['rsi'] > 65:
-                return "SELL (Mean Reversion)"
+            elif last_row['Close'] >= last_row['bb_upper'] and last_row['rsi'] > 65:
+                signal_type = "SELL (Mean Reversion)"
 
-        return None # No high-probability signal found
+        # 3. If a signal exists, calculate the Risk Data
+        if signal_type:
+            entry_price = last_row['Close']
+            atr_val = last_row['ATR']
+            sl_dist = atr_val * sl_multiplier
+            
+            if "BUY" in signal_type:
+                sl = entry_price - sl_dist
+                tp = entry_price + (sl_dist * tp_ratio)
+            else: # SELL
+                sl = entry_price + sl_dist
+                tp = entry_price - (sl_dist * tp_ratio)
+
+            # Return a structured dictionary for the Notifier and Execution modules
+            return {
+                "action": signal_type,
+                "entry": round(entry_price, 5),
+                "sl": round(sl, 5),
+                "tp": round(tp, 5)
+            }
+
+        return None
