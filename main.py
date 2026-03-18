@@ -81,7 +81,7 @@ def run_bot():
             
             if risk_data:
                 # Execution: Send Alert & Log Data
-                notifier.send_signal(symbol, signal_type, risk_data, current_session)
+                notifier.send_signal(symbol, signal_data['action'], risk_data, current_session)
                 perf_logger.log_scan(symbol, regime, signal_type, risk_data)
                 summary_results.append(f"🔥 {symbol}: {signal_type} SENT")
                 logging.info(f"Signal confirmed and sent for {symbol}.")
