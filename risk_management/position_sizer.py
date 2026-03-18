@@ -7,41 +7,56 @@ class PositionSizer:
         # Max allowable spread as a percentage of the total target
         self.max_spread_cost_pct = 0.15 # 15% max
 
-    def calculate(self, df, symbol, signal_type):
-        """Calculates TP/SL and checks if spread makes the trade low-quality."""
-        last_price = df['Close'].iloc[-1]
-        atr = df['ATR'].iloc[-1]
-        
-        # 1. Dynamic SL/TP based on Volatility (ATR)
-        if "BUY" in signal_type:
-            sl = last_price - (atr * self.config.get('default_stop_loss_atr', 1.5))
-            tp = last_price + (atr * self.config.get('default_take_profit_ratio', 2.0))
-        else: # SELL
-            sl = last_price + (atr * self.config.get('default_stop_loss_atr', 1.5))
-            tp = last_price - (atr * self.config.get('default_take_profit_ratio', 2.0))
+    def calculate(self, df, symbol, signal_data):
+        """
+        Final Audit: Converts NumPy types, checks Spread Guard, and prepares Risk Packet.
+        'signal_data' now comes from the strategy containing {action, entry, sl, tp}
+        """
+        try:
+            # 1. Extract and Clean NumPy types to standard Python floats
+            # This fixes the 'np.float64' bug in your Discord screenshot
+            entry = float(signal_data['entry'])
+            sl = float(signal_data['sl'])
+            tp = float(signal_data['tp'])
+            action = signal_data['action']
 
-        # 2. Quality Filter: The Spread Guard
-        # In a real broker API, we'd fetch 'ask' - 'bid'. 
-        # Since we use Yahoo (delayed), we estimate spread based on symbol type.
-        estimated_spread = self._estimate_spread(symbol)
-        potential_profit = abs(tp - last_price)
-        
-        if (estimated_spread / potential_profit) > self.max_spread_cost_pct:
-            logging.warning(f"QUALITY ALERT: Spread on {symbol} is too high for this target. Aborting.")
-            return None # This tells main.py to skip the signal
+            # 2. Quality Filter: The Spread Guard
+            # Uses your existing estimation logic
+            estimated_spread = self._estimate_spread(symbol)
+            potential_profit = abs(tp - entry)
+            
+            # Prevent Division by Zero if data is corrupted
+            if potential_profit == 0:
+                logging.error(f"CRITICAL: Potential profit for {symbol} is zero. Check strategy logic.")
+                return None
 
-        return {
-            "entry": round(last_price, 5),
-            "sl": round(sl, 5),
-            "tp": round(tp, 5)
-        }
+            if (estimated_spread / potential_profit) > self.max_spread_cost_pct:
+                logging.warning(f"🛡️ QUALITY ALERT: Spread on {symbol} too high for target. Aborting.")
+                return None 
+
+            # 3. Final Risk Packet
+            # Rounding to 5 decimals for Forex (3 for JPY/Gold)
+            precision = 3 if any(x in symbol for x in ["JPY", "XAU", "XAG"]) else 5
+            
+            return {
+                "entry": round(entry, precision),
+                "sl": round(sl, precision),
+                "tp": round(tp, precision),
+                "action": action,
+                "spread_cost_pct": round((estimated_spread / potential_profit) * 100, 2)
+            }
+
+        except Exception as e:
+            logging.error(f"Error in PositionSizer: {e}")
+            return None
 
     def _estimate_spread(self, symbol):
-        """Estimates typical 2026 spreads if live data isn't available."""
-        # Standard pips converted to price points
+        """Estimates typical spreads for 2026 market conditions."""
         spreads = {
             "EURUSD": 0.00012, "GBPUSD": 0.00018, 
             "USDJPY": 0.012, "EURJPY": 0.018, "GBPJPY": 0.025,
-            "XAUUSD": 0.35
+            "XAUUSD": 0.35, "XAGUSD": 0.025,  # Added Silver
+            "BTCUSD": 15.0, "ETHUSD": 1.2,    # Added Crypto estimates
+            "SOLUSD": 0.05
         }
-        return spreads.get(symbol, 0.0002) # Default fallback
+        return spreads.get(symbol, 0.0002)
