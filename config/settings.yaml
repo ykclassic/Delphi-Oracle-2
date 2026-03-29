@@ -33,7 +33,7 @@ symbols:
 accounts:
   - name: "Headway_Live_Cent"
     login: 4396804              # Replace with your Headway Acc Number
-    password: "${HEADWAY_PASSWORD}"
+    password: $0eP1YOn
     server: "Headway-Demo"       # Check MT5 Login for exact name
     enabled: true
     risk_multiplier: 1.0
