@@ -3,16 +3,16 @@
 # ==========================================
 
 bot_name: "Delphi_Oracle_Alpha_2026"
-version: "1.1.0"
+version: "1.2.0" # Updated for Headway Integration
 
 # Target Assets - Combined Forex, Metals, and Crypto
 symbols:
   # --- Forex Majors ---
-  - "EURUSD"  # Euro / US Dollar
-  - "GBPUSD"  # British Pound / US Dollar
-  - "USDJPY"  # US Dollar / Japanese Yen
-  - "AUDUSD"  # Australian Dollar / US Dollar
-  - "USDCAD"  # US Dollar / Canadian Dollar
+  - "EURUSD"  
+  - "GBPUSD"  
+  - "USDJPY"  
+  - "AUDUSD"  
+  - "USDCAD"  
   
   # --- Volatile Crosses ---
   - "EURJPY"
@@ -22,35 +22,44 @@ symbols:
   - "XAUUSD"  # Gold
   - "XAGUSD"  # Silver
   
-  # --- Crypto (Future Ready) ---
-  - "BTCUSD"  # Bitcoin
-  - "ETHUSD"  # Ethereum
-  - "SOLUSD"  # Solana
+  # --- Crypto ---
+  - "BTCUSD"  
+  - "ETHUSD"  
+  - "SOLUSD"  
 
 # ==========================================
 # 🏦 MULTI-ACCOUNT ARCHITECTURE
 # ==========================================
 accounts:
+  - name: "Headway_Live_Cent"
+    login: 4396804              # Replace with your Headway Acc Number
+    password: "${HEADWAY_PASSWORD}"
+    server: "Headway-Demo"       # Check MT5 Login for exact name
+    enabled: true
+    risk_multiplier: 1.0
+    account_type: "cent"         # Logic handling for 0.01 lot vs 0.10
+    symbol_suffix: ""            # Change to ".c" if Headway uses EURUSD.c
+
   - name: "Exness_Demo"
     login: 12345678
     password: "${EXNESS_PASSWORD}"
     server: "Exness-MT5Trial6"
     enabled: true
-    risk_multiplier: 1.0  # Full risk
+    risk_multiplier: 1.0
 
   - name: "Pepperstone_Demo"
     login: 87654321
     password: "${PEPPERSTONE_PASSWORD}"
     server: "Pepperstone-Demo"
     enabled: true
-    risk_multiplier: 0.5  # Conservative testing
+    risk_multiplier: 0.5
 
   - name: "Octa_Demo"
     login: 88786261
-    password: "${OCTA_PASSWORD}"  # Secure variable for your Octa password
-    server: "OctaFX-Demo"         # Standard Octa Demo server name
+    password: "${OCTA_PASSWORD}"
+    server: "OctaFX-Demo"
     enabled: true
-    risk_multiplier: 0.5  # Testing 1:1000 margin requirements
+    risk_multiplier: 0.5
 
 # ==========================================
 # 🧠 STRATEGY & ML PARAMETERS
@@ -58,12 +67,13 @@ accounts:
 timeframe: "1h"
 regime_detection: true
 lookback_period: 100
-crypto_volatility_scaling: true  # Automatically widens SL for BTC/ETH
+crypto_volatility_scaling: true
 
 # ==========================================
 # 🛡️ RISK & EXECUTION GUARDS
 # ==========================================
 risk_per_trade_percent: 1.0
+max_spread_allowed_pips: 3.0      # Safety check for Headway execution
 default_stop_loss_atr: 1.5
 default_take_profit_ratio: 2.0
 
