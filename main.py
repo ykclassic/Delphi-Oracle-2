@@ -31,7 +31,6 @@ class DelphiOracleGitHub:
         self.news_sentry = NewsSentry(self.config)
         self.position_sizer = PositionSizer(self.config)
         
-        # Removed emojis from string to prevent UnicodeEncodeError in Windows CMD
         mode = "GITHUB-MONITOR" if self.is_github else "LOCAL-TRADER"
         logging.info(f"Initialised: {self.config.get('bot_name')} in {mode} mode.")
 
@@ -48,7 +47,6 @@ class DelphiOracleGitHub:
             raise
 
     def setup_logging(self):
-        # Explicitly set the encoding for the FileHandler to utf-8
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s [%(levelname)s] %(message)s',
@@ -59,29 +57,38 @@ class DelphiOracleGitHub:
         logging.info(f"--- Market Scan Start: {datetime.now().strftime('%H:%M')} ---")
         active_reports = []
 
-        # Fix Yahoo Finance Symbols before fetching
+        # List of symbols from config
         raw_symbols = self.config.get('symbols', [])
-        corrected_symbols = []
-        for s in raw_symbols:
-            if "XAGUSD" in s: corrected_symbols.append("SI=F") # Silver
-            elif "BTCUSD" in s: corrected_symbols.append("BTC-USD")
-            elif "ETHUSD" in s: corrected_symbols.append("ETH-USD")
-            elif "SOLUSD" in s: corrected_symbols.append("SOL-USD")
-            else: corrected_symbols.append(s)
 
-        for symbol in corrected_symbols:
-            logging.info(f"Analysing {symbol}...")
-            df = self.data_manager.get_latest_data(symbol)
+        for original_symbol in raw_symbols:
+            # --- SYMBOL MAPPING LOGIC ---
+            # 1. Handle Crypto (No =X)
+            if any(crypto in original_symbol for crypto in ["BTC", "ETH", "SOL", "BNB"]):
+                target_symbol = original_symbol.replace("USD=X", "-USD").replace("USD", "-USD")
+            # 2. Handle Silver
+            elif "XAGUSD" in original_symbol:
+                target_symbol = "SI=F"
+            # 3. Handle Gold
+            elif "XAUUSD" in original_symbol:
+                target_symbol = "GC=F"
+            # 4. Default Forex (Ensure =X exists)
+            else:
+                target_symbol = original_symbol if "=X" in original_symbol else f"{original_symbol}=X"
+
+            logging.info(f"Analysing {original_symbol} (Yahoo: {target_symbol})...")
+            
+            # Fetch data using the corrected target_symbol
+            df = self.data_manager.get_latest_data(target_symbol)
             
             if df is not None and not df.empty:
                 regime = self.regime_detector.classify(df)
                 signal = self.strategy.generate_signal(df, regime)
 
                 if signal:
-                    risk = self.position_sizer.calculate(df, symbol, signal)
-                    logging.info(f"SIGNAL FOUND: {symbol} {signal['action']}")
+                    risk = self.position_sizer.calculate(df, original_symbol, signal)
+                    logging.info(f"SIGNAL FOUND: {original_symbol} {signal['action']}")
                     active_reports.append({
-                        "symbol": symbol, 
+                        "symbol": original_symbol, 
                         "type": signal['action'], 
                         "acc": "SIMULATION" if self.is_github else "LIVE",
                         "status": "SIGNAL"
