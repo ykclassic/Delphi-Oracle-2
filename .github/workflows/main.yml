@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   trade-scan:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
