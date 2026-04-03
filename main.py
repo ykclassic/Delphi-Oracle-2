@@ -36,48 +36,29 @@ class DelphiOracleGitHub:
 
     def load_config(self):
         config_path = os.path.join("config", "settings.yaml")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                for key, value in os.environ.items():
-                    content = content.replace(f"${{{key}}}", value)
-                return yaml.safe_load(content)
-        except Exception as e:
-            logging.error(f"Config Error: {e}")
-            raise
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            for key, value in os.environ.items():
+                content = content.replace(f"${{{key}}}", value)
+            return yaml.safe_load(content)
 
     def setup_logging(self):
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[logging.StreamHandler()] 
-        )
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
     def run_cycle(self):
         logging.info(f"--- Market Scan Start: {datetime.now().strftime('%H:%M')} ---")
         active_reports = []
-
-        # List of symbols from config
         raw_symbols = self.config.get('symbols', [])
 
         for original_symbol in raw_symbols:
-            # --- SYMBOL MAPPING LOGIC ---
-            # 1. Handle Crypto (No =X)
-            if any(crypto in original_symbol for crypto in ["BTC", "ETH", "SOL", "BNB"]):
+            # Precise Yahoo Mapping
+            if any(c in original_symbol for c in ["BTC", "ETH", "SOL"]):
                 target_symbol = original_symbol.replace("USD=X", "-USD").replace("USD", "-USD")
-            # 2. Handle Silver
-            elif "XAGUSD" in original_symbol:
-                target_symbol = "SI=F"
-            # 3. Handle Gold
-            elif "XAUUSD" in original_symbol:
-                target_symbol = "GC=F"
-            # 4. Default Forex (Ensure =X exists)
-            else:
-                target_symbol = original_symbol if "=X" in original_symbol else f"{original_symbol}=X"
+            elif "XAGUSD" in original_symbol: target_symbol = "SI=F"
+            elif "XAUUSD" in original_symbol: target_symbol = "GC=F"
+            else: target_symbol = original_symbol if "=X" in original_symbol else f"{original_symbol}=X"
 
             logging.info(f"Analysing {original_symbol} (Yahoo: {target_symbol})...")
-            
-            # Fetch data using the corrected target_symbol
             df = self.data_manager.get_latest_data(target_symbol)
             
             if df is not None and not df.empty:
@@ -86,22 +67,20 @@ class DelphiOracleGitHub:
 
                 if signal:
                     risk = self.position_sizer.calculate(df, original_symbol, signal)
-                    logging.info(f"SIGNAL FOUND: {original_symbol} {signal['action']}")
+                    # Added 'entry', 'sl', and 'tp' to prevent Discord KeyError
                     active_reports.append({
-                        "symbol": original_symbol, 
-                        "type": signal['action'], 
-                        "acc": "SIMULATION" if self.is_github else "LIVE",
+                        "symbol": original_symbol,
+                        "type": signal['action'],
+                        "entry": round(df['Close'].iloc[-1], 5),
+                        "sl": risk.get('sl', 0),
+                        "tp": risk.get('tp', 0),
                         "status": "SIGNAL"
                     })
+                    logging.info(f"SIGNAL FOUND: {original_symbol} {signal['action']}")
 
         self.notifier.send_heartbeat(active_reports, "GitHub-Cloud" if self.is_github else "PC-Lagos")
         logging.info("--- Scan Complete ---")
 
 if __name__ == "__main__":
     oracle = DelphiOracleGitHub()
-    if os.getenv('GITHUB_ACTIONS') == 'true':
-        oracle.run_cycle()
-    else:
-        while True:
-            oracle.run_cycle()
-            time.sleep(900)
+    oracle.run_cycle() if os.getenv('GITHUB_ACTIONS') == 'true' else None
