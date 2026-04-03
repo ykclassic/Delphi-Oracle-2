@@ -1,4 +1,4 @@
- import os
+import os
 import time
 import yaml
 import logging
@@ -28,21 +28,18 @@ class DelphiOraclePC:
         self.news_sentry = NewsSentry(self.config)
         self.position_sizer = PositionSizer(self.config)
         
-        logging.info(f"🔮 {self.config.get('bot_name', 'Delphi Oracle')} v{self.config.get('version', '1.2')} Initialized.")
+        logging.info(f"🔮 {self.config.get('bot_name', 'Delphi Oracle')} Initialized.")
 
     def load_config(self):
         """Loads settings with UTF-8 encoding to prevent UnicodeDecodeErrors."""
+        config_path = os.path.join("config", "settings.yaml")
         try:
-            # Explicitly setting encoding='utf-8' fixes the 'charmap' codec error
-            with open("config/settings.yaml", "r", encoding="utf-8") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                # Replaces ${VAR} with actual env variables if present (useful for GitHub Secrets)
+                # Replaces ${VAR} with actual env variables
                 for key, value in os.environ.items():
                     content = content.replace(f"${{{key}}}", value)
                 return yaml.safe_load(content)
-        except FileNotFoundError:
-            logging.error("❌ config/settings.yaml not found!")
-            raise
         except Exception as e:
             logging.error(f"❌ Error loading config: {e}")
             raise
@@ -60,7 +57,7 @@ class DelphiOraclePC:
     def connect_account(self, account_cfg):
         """Standard MT5 Login for PC."""
         if not mt5.initialize():
-            logging.error("MT5 Initialize failed. Ensure MT5 Terminal is open.")
+            logging.error("MT5 Initialize failed.")
             return False
         
         authorized = mt5.login(
@@ -75,14 +72,12 @@ class DelphiOraclePC:
         suffix = account_cfg.get('symbol_suffix', "")
         mt5_symbol = f"{symbol}{suffix}"
 
-        # Ensure symbol is visible
         mt5.symbol_select(mt5_symbol, True)
-
         order_type = mt5.ORDER_TYPE_BUY if "BUY" in signal['action'].upper() else mt5.ORDER_TYPE_SELL
         tick = mt5.symbol_info_tick(mt5_symbol)
         
         if tick is None:
-            logging.error(f"❌ Could not get tick info for {mt5_symbol}")
+            logging.error(f"❌ No tick for {mt5_symbol}")
             return False
 
         price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
@@ -103,10 +98,10 @@ class DelphiOraclePC:
 
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
-            logging.info(f"✅ Trade Successful on {account_cfg['name']}: {mt5_symbol} @ {price}")
+            logging.info(f"✅ Trade Success: {mt5_symbol}")
             return True
         else:
-            logging.error(f"❌ Trade Failed on {account_cfg['name']}: {result.comment} (Code: {result.retcode})")
+            logging.error(f"❌ Trade Failed: {result.comment}")
             return False
 
     def run_cycle(self):
@@ -114,12 +109,9 @@ class DelphiOraclePC:
         active_reports = []
 
         for symbol in self.config.get('symbols', []):
-            # 1. Check News Filter
             if self.news_sentry.is_market_volatile(symbol):
-                logging.info(f"Skipping {symbol} due to high-impact news.")
                 continue
 
-            # 2. Get Data & Detect Regime
             df = self.data_manager.get_latest_data(symbol)
             if df is None or df.empty:
                 continue
@@ -128,24 +120,17 @@ class DelphiOraclePC:
             signal = self.strategy.generate_signal(df, regime)
 
             if signal:
-                logging.info(f"🎯 Signal detected for {symbol}: {signal['action']}")
                 risk = self.position_sizer.calculate(df, symbol, signal)
-                
-                # 3. Iterate through enabled accounts
                 for acc in self.config.get('accounts', []):
                     if acc.get('enabled'):
                         if self.connect_account(acc):
-                            success = self.execute_on_mt5(symbol, signal, risk, acc)
-                            if success:
+                            if self.execute_on_mt5(symbol, signal, risk, acc):
                                 active_reports.append({
-                                    "symbol": symbol, 
-                                    "type": signal['action'], 
-                                    "acc": acc['name'], 
-                                    "status": "LIVE"
+                                    "symbol": symbol, "type": signal['action'], 
+                                    "acc": acc['name'], "status": "LIVE"
                                 })
-                            mt5.shutdown() # Switch accounts cleanly
+                            mt5.shutdown()
 
-        # 4. Discord Heartbeat
         self.notifier.send_heartbeat(active_reports, "PC-Native-Lagos")
 
 if __name__ == "__main__":
@@ -153,11 +138,9 @@ if __name__ == "__main__":
     while True:
         try:
             oracle.run_cycle()
-            # Sleep for 15 mins (900s)
             time.sleep(900)
         except KeyboardInterrupt:
-            logging.info("Bot stopped by user.")
             break
         except Exception as e:
-            logging.error(f"CRITICAL SYSTEM ERROR: {e}")
+            logging.error(f"CRITICAL ERROR: {e}")
             time.sleep(60)
