@@ -1,69 +1,56 @@
-name: Delphi Oracle Alpha 2026 - Daily Monitor
+name: Delphi Oracle - 24/5 Signal Engine
 
 on:
   schedule:
-    # Runs every 1 hour (Adjust as needed for Lagos trading times)
-    - cron: '0 * * * *'
-  workflow_dispatch: # Allows you to run it manually for testing
+    # Runs at the top of every hour, Monday through Friday (UTC)
+    - cron: '0 * * * 1-5'
+  workflow_dispatch:
+    # Allows you to manually trigger the bot for testing
+    inputs:
+      reason:
+        description: 'Reason for manual run'
+        required: false
+        default: 'Manual Verification'
+
+permissions:
+  contents: write  # Critical for allowing the bot to save trade_log.csv
 
 jobs:
-  monitor-markets:
+  trade-scan:
     runs-on: ubuntu-latest
-    
-    env:
-      # Map your GitHub Secrets to Environment Variables
-      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
-      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
-      MT5_SERVER: ${{ secrets.MT5_SERVER }}
-
     steps:
-      - name: Checkout Repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history so it can push logs back
 
-      - name: Setup Python 3.11
+      - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          cache: 'pip' # Speeds up subsequent runs
 
-      - name: Install Dependencies
+      - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Note: MetaTrader5 will install but stay dormant on GitHub
-          pip install MetaTrader5 
 
-      - name: Run Market Scan
-        # The GITHUB_ACTIONS env var tells main.py to skip MT5.initialize()
+      - name: 🚀 Run Delphi Oracle
         env:
-          GITHUB_ACTIONS: 'true'
+          # Injected from GitHub Settings > Secrets and Variables > Actions
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python main.py
 
-      - name: Commit and Push Trading Logs
-        shell: bash
+      - name: 💾 Commit & Sync Performance Logs
         run: |
           git config --global user.name "Delphi-Oracle-Runner"
-          git config --global user.email "bot@delphi-oracle.com"
+          git config --global user.email "bot@delphi-oracle.local"
           
-          # Only add files if they actually exist to avoid errors
-          if [ -f "delphi_oracle.log" ]; then
-            git add delphi_oracle.log
-          fi
-          
-          # Check if there are changes before committing
-          if git diff --cached --quiet; then
-            echo "No changes to logs, skipping commit."
+          # Check if the log file exists and has changes
+          if [ -f "logs/trade_log.csv" ]; then
+            git add logs/trade_log.csv
+            # Only commit if there are actual changes to the CSV
+            git diff --quiet && git diff --staged --quiet || (git commit -m "📊 Update: Performance Logs [skip ci]" && git push)
           else
-            git commit -m "Update Delphi Oracle Logs [skip ci]"
-            git push
+            echo "No log file found to commit."
           fi
-
-      - name: Upload Logs as Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: delphi-market-logs
-          path: |
-            delphi_oracle.log
-            *.csv
