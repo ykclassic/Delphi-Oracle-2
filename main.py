@@ -1,17 +1,9 @@
 import os
-import time
 import yaml
 import logging
-import pandas as pd
 from datetime import datetime
 
-# Conditional import for MT5
-try:
-    import MetaTrader5 as mt5
-    MT5_AVAILABLE = True
-except ImportError:
-    MT5_AVAILABLE = False
-
+# Core Modules
 from core.data_ingestion import DataManager
 from core.regime_detector import RegimeDetector
 from risk_management.news_sentry import NewsSentry
@@ -25,6 +17,10 @@ class DelphiOracle:
         self.is_github = os.getenv('GITHUB_ACTIONS') == 'true'
         self.config = self.load_config()
         
+        # Priority: Check Environment Variable directly if config doesn't have it
+        if not self.config.get('discord_webhook'):
+            self.config['discord_webhook'] = os.getenv('DISCORD_WEBHOOK')
+            
         self.notifier = DiscordNotifier(self.config)
         self.data_manager = DataManager(self.config)
         self.regime_detector = RegimeDetector()
@@ -37,11 +33,16 @@ class DelphiOracle:
 
     def load_config(self):
         config_path = os.path.join("config", "settings.yaml")
-        with open(config_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            for key, value in os.environ.items():
-                content = content.replace(f"${{{key}}}", value)
-            return yaml.safe_load(content)
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                # Inject env vars into the YAML string
+                for key, value in os.environ.items():
+                    content = content.replace(f"${{{key}}}", str(value))
+                return yaml.safe_load(content)
+        except Exception as e:
+            logging.error(f"Config mapping error: {e}")
+            return {}
 
     def setup_logging(self):
         logging.basicConfig(
@@ -61,7 +62,12 @@ class DelphiOracle:
         logging.info(f"--- SCAN START: {datetime.now().strftime('%H:%M')} ---")
         dashboard = {}
         
-        for symbol in self.config.get('symbols', []):
+        symbols = self.config.get('symbols', [
+            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
+            "EURJPY", "GBPJPY", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "SOLUSD"
+        ])
+
+        for symbol in symbols:
             fetch_symbol = self.get_yahoo_symbol(symbol) if self.is_github else symbol
             logging.info(f"Fetching data for {fetch_symbol}...")
             
@@ -75,8 +81,7 @@ class DelphiOracle:
             signal = self.strategy.generate_signal(df, regime)
 
             if signal:
-                status = f"SIGNAL: {signal['action']}"
-                dashboard[symbol] = {"status": status}
+                dashboard[symbol] = {"status": f"SIGNAL: {signal['action']}"}
             else:
                 dashboard[symbol] = {"status": "Scanning"}
 
