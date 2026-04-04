@@ -5,7 +5,6 @@ on:
     # Runs at the top of every hour, Monday through Friday (UTC)
     - cron: '0 * * * 1-5'
   workflow_dispatch:
-    # Allows you to manually trigger the bot for testing
     inputs:
       reason:
         description: 'Reason for manual run'
@@ -13,22 +12,23 @@ on:
         default: 'Manual Verification'
 
 permissions:
-  contents: write  # Critical for allowing the bot to save trade_log.csv
+  contents: write
 
 jobs:
   trade-scan:
-    runs-on: ubuntu-latest
+    # Changed to windows-latest for consistency with your local environment
+    runs-on: windows-latest
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches all history so it can push logs back
+          fetch-depth: 0
 
       - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # Speeds up subsequent runs
+          cache: 'pip'
 
       - name: 📦 Install Dependencies
         run: |
@@ -36,20 +36,21 @@ jobs:
           pip install -r requirements.txt
 
       - name: 🚀 Run Delphi Oracle
+        shell: bash
         env:
-          # Injected from GitHub Settings > Secrets and Variables > Actions
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # CRITICAL: Name must be DISCORD_WEBHOOK to match main.py
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_ACTIONS: 'true'
         run: python main.py
 
       - name: 💾 Commit & Sync Performance Logs
+        shell: bash
         run: |
           git config --global user.name "Delphi-Oracle-Runner"
           git config --global user.email "bot@delphi-oracle.local"
           
-          # Check if the log file exists and has changes
           if [ -f "logs/trade_log.csv" ]; then
             git add logs/trade_log.csv
-            # Only commit if there are actual changes to the CSV
             git diff --quiet && git diff --staged --quiet || (git commit -m "📊 Update: Performance Logs [skip ci]" && git push)
           else
             echo "No log file found to commit."
