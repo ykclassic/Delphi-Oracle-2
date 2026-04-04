@@ -1,161 +1,131 @@
 import os
-import time
 import yaml
 import logging
-import MetaTrader5 as mt5
-from datetime import datetime
-
-# Core Delphi Oracle Modules
+import datetime
 from core.data_ingestion import DataManager
 from core.regime_detector import RegimeDetector
+from core.logger import PerformanceLogger
+from core.session_manager import SessionManager
 from risk_management.news_sentry import NewsSentry
 from risk_management.position_sizer import PositionSizer
 from strategies.trend_following import TrendStrategy
 from execution.discord_adapter import DiscordNotifier
 
-class DelphiOracleTrader:
-    def __init__(self):
-        self.setup_logging()
-        self.config = self.load_config()
+def load_config():
+    """Loads configuration and resolves environment secrets."""
+    with open("config/settings.yaml", "r") as f:
+        config = yaml.safe_load(f)
+    
+    # Resolve Discord Webhook from GitHub Secrets
+    webhook_env = os.getenv("DISCORD_WEBHOOK_URL")
+    if webhook_env:
+        config['discord']['webhook_url'] = webhook_env
+    return config
+
+def run_bot():
+    # 1. Initialize System & Logging
+    logging.basicConfig(
+        level=logging.INFO, 
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    logging.info("--- Delphi Oracle v1.1: Quality Engine Starting ---")
+    
+    config = load_config()
+    if not config['discord'].get('webhook_url'):
+        logging.error("Missing DISCORD_WEBHOOK_URL. Bot cannot send alerts.")
+        return
+
+    # 2. Module Instantiation
+    data_manager = DataManager(config)
+    regime_detector = RegimeDetector()
+    perf_logger = PerformanceLogger()
+    news_sentry = NewsSentry(config)
+    session_manager = SessionManager()
+    strategy = TrendStrategy(config)
+    position_sizer = PositionSizer(config)
+    notifier = DiscordNotifier(config)
+
+    summary_results = []
+    current_session = session_manager.get_current_session()
+    
+    # 3. Main Execution Loop
+    for symbol in config['symbols']:
+        logging.info(f"Analyzing {symbol}...")
         
-        # Initialize Core Components
-        self.notifier = DiscordNotifier(self.config)
-        self.data_manager = DataManager(self.config)
-        self.regime_detector = RegimeDetector()
-        self.strategy = TrendStrategy(self.config)
-        self.news_sentry = NewsSentry(self.config)
-        self.position_sizer = PositionSizer(self.config)
-        
-        # Use plain text to avoid Windows Encoding Errors
-        logging.info("STARTUP: Delphi Oracle VPS TRADER Active.")
-        logging.info("MODE: Single-Position Lock Enabled.")
-
-    def load_config(self):
-        """Loads settings and injects Environment Variables."""
-        config_path = "config/settings.yaml"
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                for key, value in os.environ.items():
-                    content = content.replace(f"${{{key}}}", value)
-                return yaml.safe_load(content)
-        except Exception as e:
-            logging.error(f"Config Load Failure: {e}")
-            raise
-
-    def setup_logging(self):
-        """Standard logging without emojis for Windows compatibility."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[
-                logging.FileHandler("vps_execution.log"),
-                logging.StreamHandler()
-            ]
-        )
-
-    def mt5_connect(self, acc):
-        """Maintains connection to the Headway MT5 Terminal."""
-        if not mt5.initialize():
-            return False
-        
-        authorized = mt5.login(
-            int(acc['login']), 
-            password=acc['password'], 
-            server=acc['server']
-        )
-        return authorized
-
-    def has_open_position(self, symbol, acc):
-        """Checks if a position for this symbol is already open."""
-        if not self.mt5_connect(acc):
-            return True # Fail-safe: don't trade if we can't verify positions
+        # A. News Filter (High Impact Protection)
+        if news_sentry.is_market_volatile(symbol):
+            logging.warning(f"Skipping {symbol}: High-impact news detected.")
+            summary_results.append(f"⚪ {symbol}: News Sentry Block")
+            continue
             
-        mt5_symbol = f"{symbol}{acc.get('symbol_suffix', '')}"
-        positions = mt5.positions_get(symbol=mt5_symbol)
+        # B. Data Acquisition (Retry Logic handled in DataManager)
+        df = data_manager.get_latest_data(symbol)
+        if df is None or len(df) < 50:
+            logging.warning(f"Insufficient data for {symbol}.")
+            summary_results.append(f"🔴 {symbol}: Data Fetch Error")
+            continue
+            
+        # C. Market Intelligence (Regime Analysis)
+        # 0=Range, 1=Trend, 2=Chaos
+        regime = regime_detector.classify(df)
+        regime_map = {0: "🟦 Range", 1: "🟩 Trend", 2: "🟧 Chaos"}
+        logging.info(f"{symbol} detected in {regime_map.get(regime)} regime.")
+
+        # D. Signal Generation
+        signal_type = strategy.generate_signal(df, regime)
         
-        return len(positions) > 0 if positions is not None else False
+        # E. Quality Control: Spread & Position Sizing
+        if signal_type:
+            # Calculate Risk & Check Spread Quality
+            risk_data = position_sizer.calculate(df, symbol, signal_type)
+            
+            if risk_data:
+                # Execution: Send Alert & Log Data
+                notifier.send_signal(symbol, signal_type, risk_data, current_session)
+                perf_logger.log_scan(symbol, regime, signal_type, risk_data)
+                summary_results.append(f"🔥 {symbol}: {signal_type} SENT")
+                logging.info(f"Signal confirmed and sent for {symbol}.")
+            else:
+                # Signal rejected by Spread Guard (Quality Check)
+                summary_results.append(f"🚫 {symbol}: Rejected (Low Quality/High Spread)")
+                logging.warning(f"Signal rejected for {symbol} due to poor Risk/Reward (Spread).")
+        else:
+            # No technical setup found
+            summary_results.append(f"{regime_map.get(regime)} {symbol}: Scanning...")
 
-    def execute_trade(self, symbol, signal, risk, acc):
-        """Sends the live Market Order to the Headway Server."""
-        mt5_symbol = f"{symbol}{acc.get('symbol_suffix', '')}"
-        mt5.symbol_select(mt5_symbol, True)
+    # 4. Final Heartbeat Update
+    notifier.send_heartbeat(summary_results, current_session)
+    
+    # 5. Friday Weekly Report Logic
+    # If today is Friday and it's the last hour of the trading week (21:00 UTC)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if now.weekday() == 4 and now.hour == 21:
+        logging.info("Generating Weekly Performance Report...")
+        generate_weekly_report(perf_logger, notifier)
+
+    logging.info("--- Scan Cycle Complete ---")
+
+def generate_weekly_report(logger, notifier):
+    """Calculates weekly P&L stats and sends to Discord."""
+    try:
+        df = pd.read_csv(logger.file_path)
+        # Filter for last 7 days and successful outcomes
+        # (This is a simplified summary logic)
+        total_signals = len(df[df['Signal'] != 'None'])
+        wins = len(df[df['Outcome'] == '✅ TAKE PROFIT'])
+        losses = len(df[df['Outcome'] == '❌ STOP LOSS'])
         
-        tick = mt5.symbol_info_tick(mt5_symbol)
-        if tick is None:
-            return False
-
-        order_type = mt5.ORDER_TYPE_BUY if "BUY" in signal['action'].upper() else mt5.ORDER_TYPE_SELL
-        price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": mt5_symbol,
-            "volume": float(risk['lots']),
-            "type": order_type,
-            "price": price,
-            "sl": float(risk['sl']),
-            "tp": float(risk['tp']),
-            "magic": 202603,
-            "comment": f"Delphi {acc['name']}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
-        }
-
-        result = mt5.order_send(request)
-        return result.retcode == mt5.TRADE_RETCODE_DONE
-
-    def run_cycle(self):
-        logging.info(f"--- SCAN START: {datetime.now().strftime('%H:%M')} ---")
-        dashboard_report = {}
-        symbols = self.config.get('symbols', [])
-
-        for symbol in symbols:
-            # Default state
-            dashboard_report[symbol] = "Scanning"
-
-            for acc in self.config.get('accounts', []):
-                if not acc.get('enabled'):
-                    continue
-
-                # 1. Lock Check
-                if self.has_open_position(symbol, acc):
-                    dashboard_report[symbol] = "Position Open (Locked)"
-                    continue
-
-                # 2. Data Ingestion
-                df = self.data_manager.get_latest_data(symbol)
-                if df is None or df.empty:
-                    dashboard_report[symbol] = "Data Fetch Error"
-                    continue
-                
-                # 3. Strategy Engine
-                regime = self.regime_detector.classify(df)
-                signal = self.strategy.generate_signal(df, regime)
-
-                if signal:
-                    risk = self.position_sizer.calculate(df, symbol, signal)
-                    if self.mt5_connect(acc):
-                        success = self.execute_trade(symbol, signal, risk, acc)
-                        if success:
-                            dashboard_report[symbol] = f"LIVE {signal['action']}"
-                            logging.info(f"TRADE PLACED: {symbol} {signal['action']}")
-                        mt5.shutdown()
-
-        # Update Discord
-        self.notifier.send_heartbeat(dashboard_report, "Lagos-VPS")
-        logging.info("--- SCAN COMPLETE ---")
+        report = [
+            f"**Total Signals:** {total_signals}",
+            f"**Wins:** {wins} ✅",
+            f"**Losses:** {losses} ❌",
+            f"**Win Rate:** {(wins/max(1, wins+losses))*100:.1f}%"
+        ]
+        
+        # We can use the notifier's heartbeat style for the report
+        notifier.send_heartbeat(report, "WEEKLY PERFORMANCE SUMMARY 📊")
+    except Exception as e:
+        logging.error(f"Report generation failed: {e}")
 
 if __name__ == "__main__":
-    oracle = DelphiOracleTrader()
-    # If running on GitHub Actions, run once. Otherwise, loop.
-    if os.getenv('GITHUB_ACTIONS') == 'true':
-        oracle.run_cycle()
-    else:
-        while True:
-            try:
-                oracle.run_cycle()
-                time.sleep(900) # 15-minute interval
-            except Exception as e:
-                logging.error(f"RUNTIME ERROR: {e}")
-                time.sleep(60)
+    run_bot()
