@@ -8,7 +8,7 @@ on:
 
 jobs:
   monitor-markets:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     
     env:
       # Map your GitHub Secrets to Environment Variables
