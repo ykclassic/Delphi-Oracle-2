@@ -1,131 +1,142 @@
 import os
+import time
 import yaml
 import logging
-import datetime
+import pandas as pd
+from datetime import datetime
+
+# Conditional import for MT5 (PC only)
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
+
 from core.data_ingestion import DataManager
 from core.regime_detector import RegimeDetector
-from core.logger import PerformanceLogger
-from core.session_manager import SessionManager
 from risk_management.news_sentry import NewsSentry
 from risk_management.position_sizer import PositionSizer
 from strategies.trend_following import TrendStrategy
 from execution.discord_adapter import DiscordNotifier
 
-def load_config():
-    """Loads configuration and resolves environment secrets."""
-    with open("config/settings.yaml", "r") as f:
-        config = yaml.safe_load(f)
-    
-    # Resolve Discord Webhook from GitHub Secrets
-    webhook_env = os.getenv("DISCORD_WEBHOOK_URL")
-    if webhook_env:
-        config['discord']['webhook_url'] = webhook_env
-    return config
-
-def run_bot():
-    # 1. Initialize System & Logging
-    logging.basicConfig(
-        level=logging.INFO, 
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    logging.info("--- Delphi Oracle v1.1: Quality Engine Starting ---")
-    
-    config = load_config()
-    if not config['discord'].get('webhook_url'):
-        logging.error("Missing DISCORD_WEBHOOK_URL. Bot cannot send alerts.")
-        return
-
-    # 2. Module Instantiation
-    data_manager = DataManager(config)
-    regime_detector = RegimeDetector()
-    perf_logger = PerformanceLogger()
-    news_sentry = NewsSentry(config)
-    session_manager = SessionManager()
-    strategy = TrendStrategy(config)
-    position_sizer = PositionSizer(config)
-    notifier = DiscordNotifier(config)
-
-    summary_results = []
-    current_session = session_manager.get_current_session()
-    
-    # 3. Main Execution Loop
-    for symbol in config['symbols']:
-        logging.info(f"Analyzing {symbol}...")
+class DelphiOracle:
+    def __init__(self):
+        self.setup_logging()
+        self.is_github = os.getenv('GITHUB_ACTIONS') == 'true'
+        self.config = self.load_config()
         
-        # A. News Filter (High Impact Protection)
-        if news_sentry.is_market_volatile(symbol):
-            logging.warning(f"Skipping {symbol}: High-impact news detected.")
-            summary_results.append(f"⚪ {symbol}: News Sentry Block")
-            continue
-            
-        # B. Data Acquisition (Retry Logic handled in DataManager)
-        df = data_manager.get_latest_data(symbol)
-        if df is None or len(df) < 50:
-            logging.warning(f"Insufficient data for {symbol}.")
-            summary_results.append(f"🔴 {symbol}: Data Fetch Error")
-            continue
-            
-        # C. Market Intelligence (Regime Analysis)
-        # 0=Range, 1=Trend, 2=Chaos
-        regime = regime_detector.classify(df)
-        regime_map = {0: "🟦 Range", 1: "🟩 Trend", 2: "🟧 Chaos"}
-        logging.info(f"{symbol} detected in {regime_map.get(regime)} regime.")
-
-        # D. Signal Generation
-        signal_type = strategy.generate_signal(df, regime)
+        self.notifier = DiscordNotifier(self.config)
+        self.data_manager = DataManager(self.config)
+        self.regime_detector = RegimeDetector()
+        self.strategy = TrendStrategy(self.config)
+        self.news_sentry = NewsSentry(self.config)
+        self.position_sizer = PositionSizer(self.config)
         
-        # E. Quality Control: Spread & Position Sizing
-        if signal_type:
-            # Calculate Risk & Check Spread Quality
-            risk_data = position_sizer.calculate(df, symbol, signal_type)
+        mode = "GITHUB-MONITOR" if self.is_github else "PC-TRADER"
+        logging.info(f"STARTUP: Delphi Oracle {mode} Active.")
+
+    def load_config(self):
+        config_path = os.path.join("config", "settings.yaml")
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            for key, value in os.environ.items():
+                content = content.replace(f"${{{key}}}", value)
+            return yaml.safe_load(content)
+
+    def setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            handlers=[logging.StreamHandler()]
+        )
+
+    def get_yahoo_symbol(self, symbol):
+        """Maps internal symbols to Yahoo Finance format for GitHub runs."""
+        if any(c in symbol for c in ["BTC", "ETH", "SOL"]):
+            return symbol.replace("USD", "-USD")
+        if "XAUUSD" in symbol: return "GC=F"
+        if "XAGUSD" in symbol: return "SI=F"
+        return f"{symbol}=X" if "=X" not in symbol else symbol
+
+    def check_position_lock(self, symbol):
+        """Checks if a trade is already open (PC Only)."""
+        if self.is_github or not MT5_AVAILABLE:
+            return False
+        
+        for acc in self.config.get('accounts', []):
+            if acc.get('enabled'):
+                if not mt5.initialize(): continue
+                mt5.login(int(acc['login']), password=acc['password'], server=acc['server'])
+                pos = mt5.positions_get(symbol=symbol)
+                if pos: return True
+        return False
+
+    def execute_pc_trade(self, symbol, signal, risk):
+        """Executes trade via MT5 (PC Only)."""
+        if self.is_github or not MT5_AVAILABLE: return False
+        
+        for acc in self.config.get('accounts', []):
+            if acc.get('enabled'):
+                mt5.login(int(acc['login']), password=acc['password'], server=acc['server'])
+                tick = mt5.symbol_info_tick(symbol)
+                order_type = mt5.ORDER_TYPE_BUY if "BUY" in signal['action'] else mt5.ORDER_TYPE_SELL
+                request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": float(risk['lots']),
+                    "type": order_type,
+                    "price": tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid,
+                    "sl": float(risk['sl']),
+                    "tp": float(risk['tp']),
+                    "magic": 202603,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                res = mt5.order_send(request)
+                return res.retcode == mt5.TRADE_RETCODE_DONE
+        return False
+
+    def run_cycle(self):
+        logging.info(f"--- SCAN START: {datetime.now().strftime('%H:%M')} ---")
+        dashboard = {}
+        
+        for symbol in self.config.get('symbols', []):
+            # 1. Position Lock (PC Only)
+            if self.check_position_lock(symbol):
+                dashboard[symbol] = {"status": "Locked 🔒"}
+                continue
+
+            # 2. Data Fetching (GitHub uses Yahoo mapping, PC uses direct)
+            fetch_symbol = self.get_yahoo_symbol(symbol) if self.is_github else symbol
+            df = self.data_manager.get_latest_data(fetch_symbol)
             
-            if risk_data:
-                # Execution: Send Alert & Log Data
-                notifier.send_signal(symbol, signal_type, risk_data, current_session)
-                perf_logger.log_scan(symbol, regime, signal_type, risk_data)
-                summary_results.append(f"🔥 {symbol}: {signal_type} SENT")
-                logging.info(f"Signal confirmed and sent for {symbol}.")
+            if df is None or df.empty:
+                dashboard[symbol] = {"status": "Data Error 🔴"}
+                continue
+
+            # 3. Signal Generation
+            regime = self.regime_detector.classify(df)
+            signal = self.strategy.generate_signal(df, regime)
+
+            if signal:
+                risk = self.position_sizer.calculate(df, symbol, signal)
+                if not self.is_github:
+                    success = self.execute_pc_trade(symbol, signal, risk)
+                    status = f"LIVE {signal['action']} 💰" if success else "Execution Fail"
+                else:
+                    status = f"SIGNAL: {signal['action']} 📡"
+                dashboard[symbol] = {"status": status}
             else:
-                # Signal rejected by Spread Guard (Quality Check)
-                summary_results.append(f"🚫 {symbol}: Rejected (Low Quality/High Spread)")
-                logging.warning(f"Signal rejected for {symbol} due to poor Risk/Reward (Spread).")
-        else:
-            # No technical setup found
-            summary_results.append(f"{regime_map.get(regime)} {symbol}: Scanning...")
+                dashboard[symbol] = {"status": "Scanning 🟦"}
 
-    # 4. Final Heartbeat Update
-    notifier.send_heartbeat(summary_results, current_session)
-    
-    # 5. Friday Weekly Report Logic
-    # If today is Friday and it's the last hour of the trading week (21:00 UTC)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if now.weekday() == 4 and now.hour == 21:
-        logging.info("Generating Weekly Performance Report...")
-        generate_weekly_report(perf_logger, notifier)
-
-    logging.info("--- Scan Cycle Complete ---")
-
-def generate_weekly_report(logger, notifier):
-    """Calculates weekly P&L stats and sends to Discord."""
-    try:
-        df = pd.read_csv(logger.file_path)
-        # Filter for last 7 days and successful outcomes
-        # (This is a simplified summary logic)
-        total_signals = len(df[df['Signal'] != 'None'])
-        wins = len(df[df['Outcome'] == '✅ TAKE PROFIT'])
-        losses = len(df[df['Outcome'] == '❌ STOP LOSS'])
-        
-        report = [
-            f"**Total Signals:** {total_signals}",
-            f"**Wins:** {wins} ✅",
-            f"**Losses:** {losses} ❌",
-            f"**Win Rate:** {(wins/max(1, wins+losses))*100:.1f}%"
-        ]
-        
-        # We can use the notifier's heartbeat style for the report
-        notifier.send_heartbeat(report, "WEEKLY PERFORMANCE SUMMARY 📊")
-    except Exception as e:
-        logging.error(f"Report generation failed: {e}")
+        source = "GitHub-Cloud" if self.is_github else "Lagos-VPS"
+        self.notifier.send_heartbeat(dashboard, source)
+        logging.info("--- SCAN COMPLETE ---")
 
 if __name__ == "__main__":
-    run_bot()
+    bot = DelphiOracle()
+    if os.getenv('GITHUB_ACTIONS') == 'true':
+        bot.run_cycle()
+    else:
+        while True:
+            bot.run_cycle()
+            time.sleep(900)
