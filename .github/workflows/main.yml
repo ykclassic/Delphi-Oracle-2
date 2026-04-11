@@ -1,23 +1,22 @@
-name: Delphi Oracle - 24/5 Signal Engine
+name: Delphi Oracle - Signal Engine
 
 on:
   schedule:
-    # Runs at the top of every hour, Monday through Friday (UTC)
-    - cron: '0 * * * 1-5'
+    - cron: '0 * * * 1-5'   # Every hour, Mon–Fri (UTC)
   workflow_dispatch:
-    inputs:
-      reason:
-        description: 'Reason for manual run'
-        required: false
-        default: 'Manual Verification'
 
 permissions:
   contents: write
 
 jobs:
   trade-scan:
-    # Changed to windows-latest for consistency with your local environment
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+
+    # Prevent simultaneous writes to trade_log.csv
+    concurrency:
+      group: trade-log
+      cancel-in-progress: false
+
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
@@ -35,23 +34,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🚀 Run Delphi Oracle
-        shell: bash
+      - name: 🚀 Run Signal Engine
         env:
-          # CRITICAL: Name must be DISCORD_WEBHOOK to match main.py
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          GITHUB_ACTIONS: 'true'
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python main.py
 
-      - name: 💾 Commit & Sync Performance Logs
-        shell: bash
+      - name: 💾 Commit & Push Trade Logs
         run: |
-          git config --global user.name "Delphi-Oracle-Runner"
-          git config --global user.email "bot@delphi-oracle.local"
-          
-          if [ -f "logs/trade_log.csv" ]; then
+          git config user.name "oracle-bot"
+          git config user.email "bot@oracle.local"
+
+          if [ -f logs/trade_log.csv ]; then
             git add logs/trade_log.csv
-            git diff --quiet && git diff --staged --quiet || (git commit -m "📊 Update: Performance Logs [skip ci]" && git push)
+            git diff --quiet && git diff --staged --quiet || \
+            (git commit -m "📊 Update trade logs [skip ci]" && git push)
           else
-            echo "No log file found to commit."
+            echo "No trade log found."
           fi
