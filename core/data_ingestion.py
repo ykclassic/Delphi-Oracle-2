@@ -11,34 +11,47 @@ class DataManager:
 
     def _format_symbol(self, symbol: str) -> str:
         """
-        Converts broker symbols → Yahoo Finance format
+        Converts internal symbols → Yahoo Finance format
         """
 
-        # Forex pairs → EURUSD=X
-        forex_pairs = [
+        # Forex pairs
+        forex_pairs = {
             "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
             "USDCAD", "USDCHF", "NZDUSD",
             "EURGBP", "EURJPY", "GBPJPY"
-        ]
+        }
+
+        # Crypto mapping
+        crypto_map = {
+            "BTCUSD": "BTC-USD",
+            "ETHUSD": "ETH-USD",
+            "SOLUSD": "SOL-USD"
+        }
+
+        # Metals
+        metals_map = {
+            "XAUUSD": "GC=F",
+            "XAGUSD": "SI=F"
+        }
 
         if symbol in forex_pairs:
             return f"{symbol}=X"
 
-        # Gold
-        if symbol == "XAUUSD":
-            return "GC=F"
+        if symbol in crypto_map:
+            return crypto_map[symbol]
 
-        # Silver
-        if symbol == "XAGUSD":
-            return "SI=F"
+        if symbol in metals_map:
+            return metals_map[symbol]
 
-        # Default fallback
+        # If already formatted (safety)
+        if "=" in symbol or "-" in symbol:
+            return symbol
+
+        # Fallback (log it explicitly)
+        logging.warning(f"Unknown symbol format: {symbol}, using raw")
         return symbol
 
     def get_latest_data(self, symbol):
-        """
-        Fetch OHLCV data safely
-        """
         ticker_str = self._format_symbol(symbol)
 
         logging.info(f"Fetching data for {symbol} → {ticker_str}")
@@ -55,16 +68,21 @@ class DataManager:
                 if data is not None and not data.empty:
                     data = data.reset_index()
 
-                    # Normalize column naming
+                    # Normalize datetime column
                     if "Date" in data.columns:
                         data.rename(columns={"Date": "Datetime"}, inplace=True)
+                    if "Datetime" not in data.columns:
+                        data.rename(columns={data.columns[0]: "Datetime"}, inplace=True)
+
+                    # Ensure sorted
+                    data = data.sort_values("Datetime")
 
                     return data
 
-                logging.warning(f"Attempt {attempt+1}: Empty data for {symbol}")
+                logging.warning(f"Attempt {attempt + 1}: Empty data for {symbol}")
 
             except Exception as e:
-                logging.error(f"Attempt {attempt+1} failed for {symbol}: {e}")
+                logging.error(f"Attempt {attempt + 1} failed for {symbol}: {e}")
                 time.sleep(2)
 
         logging.error(f"FAILED to fetch data for {symbol}")
