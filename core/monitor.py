@@ -1,5 +1,4 @@
 import pandas as pd
-import logging
 from core.data_ingestion import DataManager
 
 class SignalMonitor:
@@ -9,40 +8,69 @@ class SignalMonitor:
         self.data_manager = DataManager(config)
 
     def check_outcomes(self):
-        """Analyzes active signals against current live data."""
         try:
             df_logs = pd.read_csv(self.log_path)
         except FileNotFoundError:
             return []
 
-        if 'Outcome' not in df_logs.columns:
-            df_logs['Outcome'] = 'Pending'
-
         updates = []
+
         for idx, row in df_logs.iterrows():
-            if row['Outcome'] != 'Pending' or row['Signal'] == 'None':
+            if row["status"] != "OPEN":
                 continue
 
-            symbol = row['Symbol']
-            # Fetch high-fidelity data for exit check
+            symbol = row["symbol"]
             data = self.data_manager.get_latest_data(symbol)
-            if data is None: continue
 
-            price = data['Close'].iloc[-1]
-            high = data['High'].max()
-            low = data['Low'].min()
-            
-            outcome = "Pending"
-            if "BUY" in row['Signal']:
-                if high >= row['TP']: outcome = "✅ TAKE PROFIT"
-                elif low <= row['SL']: outcome = "❌ STOP LOSS"
-            elif "SELL" in row['Signal']:
-                if low <= row['TP']: outcome = "✅ TAKE PROFIT"
-                elif high >= row['SL']: outcome = "❌ STOP LOSS"
+            if data is None or data.empty:
+                continue
 
-            if outcome != "Pending":
-                df_logs.at[idx, 'Outcome'] = outcome
-                updates.append(f"**{symbol}**: {outcome} at price {price:.5f}")
+            data['Datetime'] = pd.to_datetime(data['Datetime'])
+            entry_time = pd.to_datetime(row["entry_time"])
+
+            # 🔥 CRITICAL FIX: Only use candles AFTER entry
+            future_data = data[data['Datetime'] >= entry_time]
+
+            outcome = None
+            exit_price = None
+            exit_time = None
+
+            for _, candle in future_data.iterrows():
+                high = candle["High"]
+                low = candle["Low"]
+
+                # 🔥 Correct order: SL first (conservative)
+                if "BUY" in row["signal"]:
+                    if low <= row["sl"]:
+                        outcome = "❌ STOP LOSS"
+                        exit_price = row["sl"]
+                        exit_time = candle["Datetime"]
+                        break
+                    if high >= row["tp"]:
+                        outcome = "✅ TAKE PROFIT"
+                        exit_price = row["tp"]
+                        exit_time = candle["Datetime"]
+                        break
+
+                elif "SELL" in row["signal"]:
+                    if high >= row["sl"]:
+                        outcome = "❌ STOP LOSS"
+                        exit_price = row["sl"]
+                        exit_time = candle["Datetime"]
+                        break
+                    if low <= row["tp"]:
+                        outcome = "✅ TAKE PROFIT"
+                        exit_price = row["tp"]
+                        exit_time = candle["Datetime"]
+                        break
+
+            if outcome:
+                df_logs.at[idx, "outcome"] = outcome
+                df_logs.at[idx, "status"] = "CLOSED"
+                df_logs.at[idx, "exit_price"] = exit_price
+                df_logs.at[idx, "exit_time"] = exit_time
+
+                updates.append(f"{symbol}: {outcome}")
 
         df_logs.to_csv(self.log_path, index=False)
         return updates
