@@ -25,11 +25,11 @@ class SignalMonitor:
             if data is None or data.empty:
                 continue
 
-            data['Datetime'] = pd.to_datetime(data['Datetime'])
+            data["Datetime"] = pd.to_datetime(data["Datetime"])
             entry_time = pd.to_datetime(row["entry_time"])
 
-            # 🔥 CRITICAL FIX: Only use candles AFTER entry
-            future_data = data[data['Datetime'] >= entry_time]
+            # Only candles AFTER entry
+            future_data = data[data["Datetime"] >= entry_time]
 
             outcome = None
             exit_price = None
@@ -39,7 +39,7 @@ class SignalMonitor:
                 high = candle["High"]
                 low = candle["Low"]
 
-                # 🔥 Correct order: SL first (conservative)
+                # BUY logic
                 if "BUY" in row["signal"]:
                     if low <= row["sl"]:
                         outcome = "❌ STOP LOSS"
@@ -52,6 +52,7 @@ class SignalMonitor:
                         exit_time = candle["Datetime"]
                         break
 
+                # SELL logic
                 elif "SELL" in row["signal"]:
                     if high >= row["sl"]:
                         outcome = "❌ STOP LOSS"
@@ -65,10 +66,20 @@ class SignalMonitor:
                         break
 
             if outcome:
+                duration = (exit_time - entry_time).total_seconds() / 60
+
+                pnl = (
+                    exit_price - row["entry"]
+                    if "BUY" in row["signal"]
+                    else row["entry"] - exit_price
+                )
+
                 df_logs.at[idx, "outcome"] = outcome
                 df_logs.at[idx, "status"] = "CLOSED"
                 df_logs.at[idx, "exit_price"] = exit_price
                 df_logs.at[idx, "exit_time"] = exit_time
+                df_logs.at[idx, "pnl"] = pnl
+                df_logs.at[idx, "duration_minutes"] = duration
 
                 updates.append(f"{symbol}: {outcome}")
 
