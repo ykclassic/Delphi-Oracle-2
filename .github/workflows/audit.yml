@@ -1,22 +1,36 @@
-name: 📊 Friday Performance Audit
+name: Delphi Oracle - Performance Audit
+
 on:
   schedule:
-    - cron: '0 21 * * 5' # Runs at 9 PM UTC every Friday (Market Close)
+    - cron: '0 21 * * 5'   # Friday 21:00 UTC
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   audit:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest   # Removed self-hosted dependency
+
     steps:
-      - name: Checkout Code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Run Monte Carlo Stress Test
-        run: |
-          python risk_management/monte_carlo.py
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Upload Audit Report
+      - name: 📦 Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🧪 Run Monte Carlo Stress Test
+        run: python risk_management/monte_carlo.py
+
+      - name: 📤 Upload Audit Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Weekly-Audit-Report
-          path: logs/performance_summary.pdf # Assuming your script saves a PDF
+          name: weekly-audit-report
+          path: logs/
