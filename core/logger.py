@@ -3,30 +3,25 @@ import datetime
 import os
 import uuid
 
+
 class PerformanceLogger:
     def __init__(self, file_path="logs/trade_log.csv"):
         self.file_path = file_path
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
 
         if not os.path.exists(self.file_path):
-            df = pd.DataFrame(columns=[
-                "trade_id",
-                "symbol",
-                "regime",
-                "signal",
-                "entry",
-                "sl",
-                "tp",
-                "entry_time",
-                "exit_time",
-                "exit_price",
-                "outcome",
-                "status"
-            ])
-            df.to_csv(self.file_path, index=False)
+            self._create_file()
+
+    def _create_file(self):
+        df = pd.DataFrame(columns=[
+            "trade_id", "symbol", "regime", "signal",
+            "entry", "sl", "tp",
+            "entry_time", "exit_time", "exit_price",
+            "outcome", "status", "pnl", "duration_minutes"
+        ])
+        df.to_csv(self.file_path, index=False)
 
     def log_trade(self, symbol, regime, signal, risk_data):
-        """Logs ONLY valid trades."""
         trade = {
             "trade_id": str(uuid.uuid4()),
             "symbol": symbol,
@@ -39,8 +34,14 @@ class PerformanceLogger:
             "exit_time": None,
             "exit_price": None,
             "outcome": "PENDING",
-            "status": "OPEN"
+            "status": "OPEN",
+            "pnl": None,
+            "duration_minutes": None
         }
 
-        df = pd.DataFrame([trade])
-        df.to_csv(self.file_path, mode='a', header=False, index=False)
+        pd.DataFrame([trade]).to_csv(
+            self.file_path,
+            mode="a",
+            header=not os.path.exists(self.file_path),
+            index=False
+        )
