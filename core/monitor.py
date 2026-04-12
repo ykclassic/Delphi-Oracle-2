@@ -1,17 +1,69 @@
 import pandas as pd
 from core.data_ingestion import DataManager
 
+
 class SignalMonitor:
     def __init__(self, config):
         self.config = config
         self.log_path = "logs/trade_log.csv"
         self.data_manager = DataManager(config)
 
+    def _ensure_schema(self, df):
+        """
+        Ensures dataframe has required columns (backward compatibility)
+        """
+
+        required_columns = {
+            "trade_id": None,
+            "symbol": None,
+            "regime": None,
+            "signal": None,
+            "entry": None,
+            "sl": None,
+            "tp": None,
+            "entry_time": None,
+            "exit_time": None,
+            "exit_price": None,
+            "outcome": "PENDING",
+            "status": "OPEN",
+            "pnl": None,
+            "duration_minutes": None
+        }
+
+        # Map OLD columns → NEW
+        column_map = {
+            "Timestamp": "entry_time",
+            "Symbol": "symbol",
+            "Regime": "regime",
+            "Signal": "signal",
+            "Entry": "entry",
+            "SL": "sl",
+            "TP": "tp",
+            "Outcome": "outcome"
+        }
+
+        # Rename old columns if they exist
+        df = df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
+
+        # Add missing columns
+        for col, default in required_columns.items():
+            if col not in df.columns:
+                df[col] = default
+
+        # Normalize casing issues
+        df["status"] = df["status"].fillna("OPEN")
+        df["outcome"] = df["outcome"].fillna("PENDING")
+
+        return df
+
     def check_outcomes(self):
         try:
             df_logs = pd.read_csv(self.log_path)
         except FileNotFoundError:
             return []
+
+        # 🔥 FIX: Ensure schema BEFORE processing
+        df_logs = self._ensure_schema(df_logs)
 
         updates = []
 
@@ -28,7 +80,6 @@ class SignalMonitor:
             data["Datetime"] = pd.to_datetime(data["Datetime"])
             entry_time = pd.to_datetime(row["entry_time"])
 
-            # Only candles AFTER entry
             future_data = data[data["Datetime"] >= entry_time]
 
             outcome = None
@@ -39,7 +90,6 @@ class SignalMonitor:
                 high = candle["High"]
                 low = candle["Low"]
 
-                # BUY logic
                 if "BUY" in row["signal"]:
                     if low <= row["sl"]:
                         outcome = "❌ STOP LOSS"
@@ -52,7 +102,6 @@ class SignalMonitor:
                         exit_time = candle["Datetime"]
                         break
 
-                # SELL logic
                 elif "SELL" in row["signal"]:
                     if high >= row["sl"]:
                         outcome = "❌ STOP LOSS"
