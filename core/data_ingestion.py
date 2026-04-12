@@ -5,85 +5,173 @@ import time
 
 
 class DataManager:
+    """
+    Institutional-grade Data Manager
+
+    Features:
+    - Symbol normalization (Forex, Metals, Crypto)
+    - In-memory caching (1 fetch per symbol per cycle)
+    - Retry with exponential backoff
+    - UTC datetime normalization
+    - Schema standardization
+    """
+
     def __init__(self, config):
         self.config = config
         self.timeframe = config.get("timeframe", "1h")
+        self.cache = {}  # 🔥 Critical: Prevent duplicate fetches
 
-    def _format_symbol(self, symbol: str) -> str:
+    # =========================
+    # SYMBOL MAPPING ENGINE
+    # =========================
+    def _map_symbol(self, symbol: str) -> str:
         """
-        Converts internal symbols → Yahoo Finance format
+        Maps internal symbols → Yahoo Finance tickers
         """
 
         # Forex pairs
-        forex_pairs = {
-            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-            "USDCAD", "USDCHF", "NZDUSD",
-            "EURGBP", "EURJPY", "GBPJPY"
+        forex_map = {
+            "EURUSD": "EURUSD=X",
+            "GBPUSD": "GBPUSD=X",
+            "USDJPY": "USDJPY=X",
+            "AUDUSD": "AUDUSD=X",
+            "USDCAD": "USDCAD=X",
+            "USDCHF": "USDCHF=X",
+            "NZDUSD": "NZDUSD=X",
+            "EURGBP": "EURGBP=X",
+            "EURJPY": "EURJPY=X",
+            "GBPJPY": "GBPJPY=X",
         }
 
-        # Crypto mapping
+        # Metals (use futures for reliability)
+        metals_map = {
+            "XAUUSD": "GC=F",   # Gold
+            "XAGUSD": "SI=F",   # Silver
+        }
+
+        # Crypto
         crypto_map = {
             "BTCUSD": "BTC-USD",
             "ETHUSD": "ETH-USD",
-            "SOLUSD": "SOL-USD"
+            "SOLUSD": "SOL-USD",
         }
 
-        # Metals
-        metals_map = {
-            "XAUUSD": "GC=F",
-            "XAGUSD": "SI=F"
-        }
-
-        if symbol in forex_pairs:
-            return f"{symbol}=X"
-
+        if symbol in forex_map:
+            return forex_map[symbol]
+        if symbol in metals_map:
+            return metals_map[symbol]
         if symbol in crypto_map:
             return crypto_map[symbol]
 
-        if symbol in metals_map:
-            return metals_map[symbol]
-
-        # If already formatted (safety)
-        if "=" in symbol or "-" in symbol:
-            return symbol
-
-        # Fallback (log it explicitly)
-        logging.warning(f"Unknown symbol format: {symbol}, using raw")
+        # Fallback (attempt generic Yahoo format)
         return symbol
 
-    def get_latest_data(self, symbol):
-        ticker_str = self._format_symbol(symbol)
+    # =========================
+    # DATA FETCH ENGINE
+    # =========================
+    def get_latest_data(self, symbol: str) -> pd.DataFrame | None:
+        """
+        Fetch OHLCV data with:
+        - caching
+        - retry logic
+        - schema normalization
+        """
 
-        logging.info(f"Fetching data for {symbol} → {ticker_str}")
+        # 🔥 CACHE HIT (major performance optimization)
+        if symbol in self.cache:
+            logging.debug(f"[CACHE HIT] {symbol}")
+            return self.cache[symbol]
 
-        for attempt in range(3):
+        ticker = self._map_symbol(symbol)
+        logging.info(f"Fetching data for {symbol} → {ticker}")
+
+        max_retries = 3
+        backoff = 2
+
+        for attempt in range(max_retries):
             try:
-                ticker = yf.Ticker(ticker_str)
-
-                data = ticker.history(
+                df = yf.download(
+                    ticker,
                     period="1mo",
-                    interval=self.timeframe
+                    interval=self.timeframe,
+                    progress=False,
+                    threads=False  # safer in CI
                 )
 
-                if data is not None and not data.empty:
-                    data = data.reset_index()
+                # ❌ No data
+                if df is None or df.empty:
+                    logging.warning(f"Attempt {attempt+1}: Empty data for {symbol}")
+                    time.sleep(backoff ** attempt)
+                    continue
 
-                    # Normalize datetime column
-                    if "Date" in data.columns:
-                        data.rename(columns={"Date": "Datetime"}, inplace=True)
-                    if "Datetime" not in data.columns:
-                        data.rename(columns={data.columns[0]: "Datetime"}, inplace=True)
+                df = self._standardize_dataframe(df)
 
-                    # Ensure sorted
-                    data = data.sort_values("Datetime")
+                # 🔥 STORE IN CACHE
+                self.cache[symbol] = df
 
-                    return data
-
-                logging.warning(f"Attempt {attempt + 1}: Empty data for {symbol}")
+                return df
 
             except Exception as e:
-                logging.error(f"Attempt {attempt + 1} failed for {symbol}: {e}")
-                time.sleep(2)
+                logging.error(f"Attempt {attempt+1} failed for {symbol}: {e}")
+                time.sleep(backoff ** attempt)
 
         logging.error(f"FAILED to fetch data for {symbol}")
         return None
+
+    # =========================
+    # DATA STANDARDIZATION
+    # =========================
+    def _standardize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensures consistent structure across all assets
+        Output columns:
+        Datetime, Open, High, Low, Close, Volume
+        """
+
+        df = df.copy()
+
+        # Reset index → bring datetime into column
+        df.reset_index(inplace=True)
+
+        # Normalize datetime column name
+        if "Datetime" not in df.columns:
+            if "Date" in df.columns:
+                df.rename(columns={"Date": "Datetime"}, inplace=True)
+
+        # Convert to datetime
+        df["Datetime"] = pd.to_datetime(df["Datetime"], errors="coerce")
+
+        # 🔥 CRITICAL FIX: Normalize timezone
+        if df["Datetime"].dt.tz is None:
+            df["Datetime"] = df["Datetime"].dt.tz_localize("UTC")
+        else:
+            df["Datetime"] = df["Datetime"].dt.tz_convert("UTC")
+
+        # Ensure numeric columns
+        numeric_cols = ["Open", "High", "Low", "Close", "Volume"]
+
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Drop bad rows
+        df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
+
+        # Sort chronologically
+        df.sort_values("Datetime", inplace=True)
+
+        # Reset index cleanly
+        df.reset_index(drop=True, inplace=True)
+
+        return df
+
+    # =========================
+    # CACHE CONTROL (OPTIONAL)
+    # =========================
+    def clear_cache(self):
+        """Clears in-memory cache (useful between cycles if needed)"""
+        self.cache = {}
+
+    def get_cached_symbols(self):
+        """Returns list of cached symbols (debugging/monitoring)"""
+        return list(self.cache.keys())
