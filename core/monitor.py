@@ -9,10 +9,6 @@ class SignalMonitor:
         self.data_manager = DataManager(config)
 
     def _ensure_schema(self, df):
-        """
-        Ensures dataframe has required columns (backward compatibility)
-        """
-
         required_columns = {
             "trade_id": None,
             "symbol": None,
@@ -30,7 +26,6 @@ class SignalMonitor:
             "duration_minutes": None
         }
 
-        # Map OLD columns → NEW
         column_map = {
             "Timestamp": "entry_time",
             "Symbol": "symbol",
@@ -42,19 +37,32 @@ class SignalMonitor:
             "Outcome": "outcome"
         }
 
-        # Rename old columns if they exist
         df = df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
 
-        # Add missing columns
         for col, default in required_columns.items():
             if col not in df.columns:
                 df[col] = default
 
-        # Normalize casing issues
         df["status"] = df["status"].fillna("OPEN")
         df["outcome"] = df["outcome"].fillna("PENDING")
 
         return df
+
+    def _normalize_datetime(self, series):
+        """
+        Converts any datetime series to UTC tz-aware
+        """
+        dt = pd.to_datetime(series, errors="coerce")
+
+        # If tz-naive → localize to UTC
+        if dt.dt.tz is None:
+            dt = dt.dt.tz_localize("UTC")
+
+        # If tz-aware → convert to UTC
+        else:
+            dt = dt.dt.tz_convert("UTC")
+
+        return dt
 
     def check_outcomes(self):
         try:
@@ -62,8 +70,10 @@ class SignalMonitor:
         except FileNotFoundError:
             return []
 
-        # 🔥 FIX: Ensure schema BEFORE processing
         df_logs = self._ensure_schema(df_logs)
+
+        # 🔥 Normalize log timestamps
+        df_logs["entry_time"] = self._normalize_datetime(df_logs["entry_time"])
 
         updates = []
 
@@ -77,8 +87,10 @@ class SignalMonitor:
             if data is None or data.empty:
                 continue
 
-            data["Datetime"] = pd.to_datetime(data["Datetime"])
-            entry_time = pd.to_datetime(row["entry_time"])
+            # 🔥 Normalize market data timestamps
+            data["Datetime"] = self._normalize_datetime(data["Datetime"])
+
+            entry_time = row["entry_time"]
 
             future_data = data[data["Datetime"] >= entry_time]
 
