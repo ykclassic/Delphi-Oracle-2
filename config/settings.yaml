@@ -90,7 +90,7 @@ impact_levels: ["High", "Medium"]
 # 📡 DISCORD & NOTIFICATIONS
 # ==========================================
 discord:
-  webhook_url: "${DISCORD_WEBHOOK_URL}"
+  webhook_url: "${https://discord.com/api/webhooks/1482835911816384882/XFrwlY8eaEUwQKynEBsWHwLbVj-SwF4VmnWJfAzogXjNc-R1pg8E2Vx1qHjj4D2qE2l8}"
   alert_role_id: "SIGNAL_SUBSCRIBER"
   send_daily_health_report: true
   health_report_time: "08:00" # UTC
