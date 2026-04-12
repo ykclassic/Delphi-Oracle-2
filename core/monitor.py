@@ -43,22 +43,20 @@ class SignalMonitor:
             if col not in df.columns:
                 df[col] = default
 
+        # 🔥 CRITICAL FIXES
         df["status"] = df["status"].fillna("OPEN")
         df["outcome"] = df["outcome"].fillna("PENDING")
+
+        # Convert signal to string safely
+        df["signal"] = df["signal"].fillna("").astype(str)
 
         return df
 
     def _normalize_datetime(self, series):
-        """
-        Converts any datetime series to UTC tz-aware
-        """
         dt = pd.to_datetime(series, errors="coerce")
 
-        # If tz-naive → localize to UTC
         if dt.dt.tz is None:
             dt = dt.dt.tz_localize("UTC")
-
-        # If tz-aware → convert to UTC
         else:
             dt = dt.dt.tz_convert("UTC")
 
@@ -72,13 +70,17 @@ class SignalMonitor:
 
         df_logs = self._ensure_schema(df_logs)
 
-        # 🔥 Normalize log timestamps
         df_logs["entry_time"] = self._normalize_datetime(df_logs["entry_time"])
 
         updates = []
 
         for idx, row in df_logs.iterrows():
+
+            # Skip invalid rows early
             if row["status"] != "OPEN":
+                continue
+
+            if not isinstance(row["signal"], str) or row["signal"] == "":
                 continue
 
             symbol = row["symbol"]
@@ -87,7 +89,6 @@ class SignalMonitor:
             if data is None or data.empty:
                 continue
 
-            # 🔥 Normalize market data timestamps
             data["Datetime"] = self._normalize_datetime(data["Datetime"])
 
             entry_time = row["entry_time"]
@@ -102,7 +103,10 @@ class SignalMonitor:
                 high = candle["High"]
                 low = candle["Low"]
 
-                if "BUY" in row["signal"]:
+                # ✅ SAFE STRING CHECK
+                signal = row["signal"]
+
+                if "BUY" in signal:
                     if low <= row["sl"]:
                         outcome = "❌ STOP LOSS"
                         exit_price = row["sl"]
@@ -114,7 +118,7 @@ class SignalMonitor:
                         exit_time = candle["Datetime"]
                         break
 
-                elif "SELL" in row["signal"]:
+                elif "SELL" in signal:
                     if high >= row["sl"]:
                         outcome = "❌ STOP LOSS"
                         exit_price = row["sl"]
@@ -131,7 +135,7 @@ class SignalMonitor:
 
                 pnl = (
                     exit_price - row["entry"]
-                    if "BUY" in row["signal"]
+                    if "BUY" in signal
                     else row["entry"] - exit_price
                 )
 
