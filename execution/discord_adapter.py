@@ -4,40 +4,64 @@ from datetime import datetime
 
 class DiscordNotifier:
     def __init__(self, config):
-        self.webhook_url = config.get('discord_webhook')
-        self.bot_name = config.get('bot_name', 'Delphi Oracle')
+        """
+        Initializes the notifier by reaching into the 'discord' block 
+        of settings.yaml and checking for environment overrides.
+        """
+        # Navigate the dictionary safely to find the webhook_url
+        self.discord_config = config.get('discord', {})
+        self.webhook_url = self.discord_config.get('webhook_url')
+        self.bot_name = config.get('bot_name', 'Delphi Oracle Alpha')
 
-    def send_heartbeat(self, dashboard_data, source="VPS"):
+        # Logic to catch un-injected GitHub Secrets or placeholders
+        if self.webhook_url:
+            if "${" in str(self.webhook_url) or self.webhook_url == "EMPTY":
+                logging.warning("⚠️ Discord Webhook URL detected as a placeholder. Setting to None.")
+                self.webhook_url = None
+        
         if not self.webhook_url:
-            logging.warning("Discord Webhook URL is missing in config.")
+            logging.warning("❌ Discord Notifier initialized WITHOUT a valid Webhook URL.")
+
+    def send_heartbeat(self, dashboard_data, source="GitHub Actions"):
+        """
+        Formats and sends the Market Scan Status dashboard to Discord.
+        Expected format for dashboard_data: {'SYMBOL': {'status': 'Text'}, ...}
+        """
+        if not self.webhook_url:
+            logging.error("Attempted to send heartbeat, but Discord Webhook URL is missing.")
             return
 
         scan_results = ""
-        # Build the string from the dashboard dictionary
-        for symbol, data in dashboard_data.items():
-            status = data.get('status', 'Scanning')
-            
-            # Select Emoji based on text content
-            if "LIVE" in status or "SIGNAL" in status: 
-                icon = "🟢"
-            elif "Locked" in status: 
-                icon = "🔒"
-            elif "Error" in status: 
-                icon = "🔴"
-            else: 
-                icon = "🟦"
-            
-            scan_results += f"{icon} **{symbol}**: {status}\n"
+        
+        # Build the status list from the dashboard dictionary
+        if isinstance(dashboard_data, dict):
+            for symbol, data in dashboard_data.items():
+                status = data.get('status', 'Scanning')
+                
+                # Dynamic Emoji selection for scannability
+                if any(x in status.upper() for x in ["LIVE", "SIGNAL", "TAKE PROFIT", "BUY", "SELL"]): 
+                    icon = "🟢"
+                elif "LOCKED" in status.upper() or "ACTIVE" in status.upper(): 
+                    icon = "🔒"
+                elif "ERROR" in status.upper() or "FAILED" in status.upper() or "REJECTED" in status.upper(): 
+                    icon = "🔴"
+                else: 
+                    icon = "🟦"
+                
+                scan_results += f"{icon} **{symbol}**: {status}\n"
+        elif isinstance(dashboard_data, list):
+            # Fallback for simple list summaries
+            scan_results = "\n".join([f"🔹 {item}" for item in dashboard_data])
 
         if not scan_results:
-            scan_results = "No data available for this cycle."
+            scan_results = "No market data captured in this cycle."
 
         payload = {
             "username": self.bot_name,
             "embeds": [{
                 "title": f"🔮 {self.bot_name} Dashboard",
-                "description": f"**Source:** `{source}`\n**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                "color": 0x00ff00,
+                "description": f"**Source:** `{source}`\n**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                "color": 0x5865F2,  # Discord Blurple
                 "fields": [
                     {
                         "name": "📊 Market Scan Status",
@@ -45,29 +69,54 @@ class DiscordNotifier:
                         "inline": False
                     }
                 ],
-                "footer": {"text": "Delphi Oracle Alpha | 2026"}
+                "footer": {"text": "TechSolute Intelligence | 2026"}
             }]
         }
 
-        # Added headers to prevent being blocked as a bot
+        # Anti-block headers
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DelphiOracle/2.6"
+            "User-Agent": f"DelphiOracle/{self.bot_name}"
         }
 
         try:
-            logging.info(f"Sending Discord alert from {source}...")
+            logging.info(f"Dispatching Discord alert from {source}...")
             response = requests.post(
                 self.webhook_url, 
                 json=payload, 
                 headers=headers, 
-                timeout=10
+                timeout=12
             )
             response.raise_for_status()
-            logging.info("Discord alert sent successfully.")
-        except requests.exceptions.HTTPError as errh:
-            logging.error(f"Discord HTTP Error: {errh}")
-        except requests.exceptions.ConnectionError as errc:
-            logging.error(f"Discord Connection Error: {errc}")
+            logging.info("✅ Discord Dashboard updated successfully.")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"🔴 Discord Notification Failed: {e}")
+
+    def send_signal(self, symbol, action, risk_data, session):
+        """
+        Sends a high-priority trading signal alert.
+        """
+        if not self.webhook_url: return
+
+        color = 0x00FF00 if "BUY" in action.upper() else 0xFF0000
+        payload = {
+            "username": self.bot_name,
+            "embeds": [{
+                "title": f"🚀 NEW SIGNAL: {symbol}",
+                "color": color,
+                "fields": [
+                    {"name": "Action", "value": f"**{action.upper()}**", "inline": True},
+                    {"name": "Session", "value": session, "inline": True},
+                    {"name": "Lots", "value": str(risk_data.get('lots', '0.01')), "inline": True},
+                    {"name": "Entry", "value": str(risk_data.get('entry', 'Market')), "inline": True},
+                    {"name": "SL", "value": str(risk_data.get('sl', 'None')), "inline": True},
+                    {"name": "TP", "value": str(risk_data.get('tp', 'None')), "inline": True}
+                ],
+                "footer": {"text": "Execute with caution. Check spreads on Headway."}
+            }]
+        }
+        
+        try:
+            requests.post(self.webhook_url, json=payload, timeout=10)
         except Exception as e:
-            logging.error(f"Unexpected Discord Error: {e}")
+            logging.error(f"Signal broadcast failed: {e}")
