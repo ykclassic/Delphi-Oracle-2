@@ -3,26 +3,20 @@
 # ==========================================
 
 bot_name: "Delphi_Oracle_Alpha_2026"
-version: "1.2.0" # Updated for Headway Integration
+version: "1.2.0"
 
-# Target Assets - Combined Forex, Metals, and Crypto
+# Target Assets
+# Note: DataManager maps these to Yahoo formats (e.g., EURUSD=X) internally
 symbols:
-  # --- Forex Majors ---
   - "EURUSD"  
   - "GBPUSD"  
   - "USDJPY"  
   - "AUDUSD"  
   - "USDCAD"  
-  
-  # --- Volatile Crosses ---
   - "EURJPY"
   - "GBPJPY"
-  
-  # --- Commodities & Metals ---
-  - "XAUUSD"  # Gold
-  - "XAGUSD"  # Silver
-  
-  # --- Crypto ---
+  - "XAUUSD"  
+  - "XAGUSD"  
   - "BTCUSD"  
   - "ETHUSD"  
   - "SOLUSD"  
@@ -32,65 +26,27 @@ symbols:
 # ==========================================
 accounts:
   - name: "Headway_Live_Cent"
-    login: 4396804              # Replace with your Headway Acc Number
-    password: $0eP1YOn
-    server: "Headway-Demo"       # Check MT5 Login for exact name
+    login: 4396804
+    password: "${HEADWAY_PASSWORD}" # Use a secret for your live password!
+    server: "Headway-Server"       # Ensure this matches your MT5 Login exactly
     enabled: true
     risk_multiplier: 1.0
-    account_type: "cent"         # Logic handling for 0.01 lot vs 0.10
-    symbol_suffix: ""            # Change to ".c" if Headway uses EURUSD.c
-
-  - name: "Exness_Demo"
-    login: 12345678
-    password: "${EXNESS_PASSWORD}"
-    server: "Exness-MT5Trial6"
-    enabled: true
-    risk_multiplier: 1.0
-
-  - name: "Pepperstone_Demo"
-    login: 87654321
-    password: "${PEPPERSTONE_PASSWORD}"
-    server: "Pepperstone-Demo"
-    enabled: true
-    risk_multiplier: 0.5
-
-  - name: "Octa_Demo"
-    login: 88786261
-    password: "${OCTA_PASSWORD}"
-    server: "OctaFX-Demo"
-    enabled: true
-    risk_multiplier: 0.5
-
-# ==========================================
-# 🧠 STRATEGY & ML PARAMETERS
-# ==========================================
-timeframe: "1h"
-regime_detection: true
-lookback_period: 100
-crypto_volatility_scaling: true
+    account_type: "cent"           
+    symbol_suffix: ""              # Set to ".c" if Headway uses EURUSD.c
 
 # ==========================================
 # 🛡️ RISK & EXECUTION GUARDS
 # ==========================================
 risk_per_trade_percent: 1.0
-max_spread_allowed_pips: 3.0      # Safety check for Headway execution
+max_spread_allowed_pips: 3.0      
 default_stop_loss_atr: 1.5
 default_take_profit_ratio: 2.0
-
-# Connection Watchdog Settings
-max_allowed_latency_ms: 200
-safety_switch_path: "execution/safety.txt"
-
-# News Filter (Minutes)
-news_buffer_before: 30
-news_buffer_after: 15
-impact_levels: ["High", "Medium"]
 
 # ==========================================
 # 📡 DISCORD & NOTIFICATIONS
 # ==========================================
 discord:
-  webhook_url: "${DISCORD_WEBHOOK_URL}"
+  # Python main.py will override this with DISCORD_WEBHOOK_URL from GitHub Secrets
+  webhook_url: "EMPTY"
   alert_role_id: "SIGNAL_SUBSCRIBER"
   send_daily_health_report: true
-  health_report_time: "08:00" # UTC
