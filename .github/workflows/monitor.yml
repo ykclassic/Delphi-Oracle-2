@@ -2,7 +2,7 @@ name: Delphi Oracle - Trade Monitor
 
 on:
   schedule:
-    - cron: '*/15 * * * 1-5'   # Every 15 minutes (Mon–Fri UTC)
+    - cron: '*/15 * * * 1-5'  # Every 15 minutes (Mon–Fri UTC)
   workflow_dispatch:
 
 permissions:
@@ -12,73 +12,62 @@ jobs:
   monitor-trades:
     runs-on: ubuntu-latest
 
-    # Prevent concurrent writes to trade_log.csv
-    concurrency:
-      group: trade-log
-      cancel-in-progress: false
-
     steps:
+      # =========================
+      # CHECKOUT REPO
+      # =========================
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # required for commits
 
-      - name: 🐍 Set up Python 3.11
+      # =========================
+      # SETUP PYTHON
+      # =========================
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
+      # =========================
+      # INSTALL DEPENDENCIES
+      # =========================
       - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🔍 Run Trade Monitor
+      # =========================
+      # RUN MONITOR ENGINE
+      # =========================
+      - name: 🚀 Run Trade Monitor
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}  # ✅ FIXED
         run: |
-          python - <<EOF
-import yaml
-import logging
-from core.monitor import SignalMonitor
+          echo "Running trade monitor..."
+          python run_monitor.py
 
-logging.basicConfig(level=logging.INFO)
-
-# Load config
-with open("config/settings.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
-# Inject webhook from GitHub Secrets
-import os
-webhook = os.getenv("DISCORD_WEBHOOK_URL")
-if webhook:
-    config["discord"]["webhook_url"] = webhook
-
-monitor = SignalMonitor(config)
-updates = monitor.check_outcomes()
-
-if updates:
-    print("Trade Updates:")
-    for u in updates:
-        print("-", u)
-else:
-    print("No trade updates.")
-EOF
-
-      - name: 💾 Commit Updated Trade Log
+      # =========================
+      # COMMIT UPDATED LOGS
+      # =========================
+      - name: 💾 Commit & Push Trade Updates
         run: |
-          git config user.name "monitor-bot"
-          git config user.email "bot@delphi-oracle.local"
+          git config --global user.name "Delphi-Monitor-Bot"
+          git config --global user.email "bot@delphi-oracle.local"
+
+          # Ensure logs folder exists
+          mkdir -p logs
 
           if [ -f logs/trade_log.csv ]; then
             git add logs/trade_log.csv
-            git diff --quiet && git diff --staged --quiet || \
-            (git commit -m "📈 Update trade outcomes [skip ci]" && git push)
-          else
-            echo "No trade log found."
-          fi
 
-      - name: ⚠️ Fail Gracefully
-        if: failure()
-        run: echo "Monitor job failed but workflow handled safely."
+            # Only commit if changes exist
+            if ! git diff --quiet && ! git diff --staged --quiet; then
+              git commit -m "📈 Update: Trade Outcomes [skip ci]"
+              git push
+            else
+              echo "No changes to commit."
+            fi
+          else
+            echo "No trade_log.csv found. Skipping commit."
