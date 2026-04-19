@@ -34,10 +34,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🚀 Run Signal Engine
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Run Delphi Oracle Scan
         run: python main.py
+        env:
+          # This line maps the GitHub Secret to an Environment Variable the Python script can read
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
       - name: 💾 Commit & Push Trade Logs
         run: |
